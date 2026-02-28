@@ -85,7 +85,10 @@ fn create_provider(
     };
 
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    providers().lock().expect("registry mutex poisoned").insert(id, provider);
+    providers()
+        .lock()
+        .expect("registry mutex poisoned")
+        .insert(id, provider);
     Ok(id)
 }
 
@@ -509,13 +512,16 @@ fn cosine_similarity(a_json: &str, b_json: &str) -> PyResult<f64> {
 #[pyfunction]
 fn create_mcp_server(name: &str, version_str: &str) -> u32 {
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    mcp_servers().lock().expect("registry mutex poisoned").insert(
-        id,
-        Arc::new(tokio::sync::Mutex::new(mcp::McpServer::new(
-            name,
-            version_str,
-        ))),
-    );
+    mcp_servers()
+        .lock()
+        .expect("registry mutex poisoned")
+        .insert(
+            id,
+            Arc::new(tokio::sync::Mutex::new(mcp::McpServer::new(
+                name,
+                version_str,
+            ))),
+        );
     id
 }
 
@@ -737,7 +743,11 @@ fn approval_list_pending(handle: u32) -> PyResult<String> {
         .get(&handle)
         .cloned()
         .ok_or_else(|| py_err("ApprovalManager not found"))?;
-    let pending = mgr.lock().expect("registry mutex poisoned").list_pending().map_err(py_err)?;
+    let pending = mgr
+        .lock()
+        .expect("registry mutex poisoned")
+        .list_pending()
+        .map_err(py_err)?;
     serde_json::to_string(&pending).map_err(py_err)
 }
 
@@ -842,7 +852,10 @@ fn eval_add_scorer(handle: u32, scorer_type: &str) -> PyResult<()> {
         "length_ratio" => Arc::new(eval::LengthRatioScorer),
         other => return Err(py_err(format!("Unknown scorer: {other}"))),
     };
-    runner.lock().expect("registry mutex poisoned").add_scorer(scorer);
+    runner
+        .lock()
+        .expect("registry mutex poisoned")
+        .add_scorer(scorer);
     Ok(())
 }
 
@@ -873,10 +886,13 @@ fn destroy_eval_runner(handle: u32) -> PyResult<()> {
 #[pyfunction]
 fn create_telemetry() -> u32 {
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    collectors().lock().expect("registry mutex poisoned").insert(
-        id,
-        Arc::new(Mutex::new(telemetry::TelemetryCollector::new())),
-    );
+    collectors()
+        .lock()
+        .expect("registry mutex poisoned")
+        .insert(
+            id,
+            Arc::new(Mutex::new(telemetry::TelemetryCollector::new())),
+        );
     id
 }
 
@@ -889,7 +905,9 @@ fn telemetry_record_span(handle: u32, span_json: &str) -> PyResult<()> {
         .cloned()
         .ok_or_else(|| py_err("TelemetryCollector not found"))?;
     let span: telemetry::SpanRecord = serde_json::from_str(span_json).map_err(py_err)?;
-    coll.lock().expect("registry mutex poisoned").record_span(span);
+    coll.lock()
+        .expect("registry mutex poisoned")
+        .record_span(span);
     Ok(())
 }
 
@@ -913,7 +931,10 @@ fn telemetry_export_metrics(handle: u32) -> PyResult<String> {
         .get(&handle)
         .cloned()
         .ok_or_else(|| py_err("TelemetryCollector not found"))?;
-    let metrics = coll.lock().expect("registry mutex poisoned").export_metrics();
+    let metrics = coll
+        .lock()
+        .expect("registry mutex poisoned")
+        .export_metrics();
     serde_json::to_string(&metrics).map_err(py_err)
 }
 
@@ -1085,7 +1106,10 @@ fn create_fallback_provider(provider_handles: Vec<u32>) -> PyResult<u32> {
 
     let fallback = Arc::new(resilience::FallbackProvider::new(providers_vec));
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    providers().lock().expect("registry mutex poisoned").insert(id, fallback);
+    providers()
+        .lock()
+        .expect("registry mutex poisoned")
+        .insert(id, fallback);
     Ok(id)
 }
 
@@ -1111,7 +1135,10 @@ fn create_circuit_breaker(
 
     let cb = Arc::new(resilience::CircuitBreaker::new(inner, config));
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    providers().lock().expect("registry mutex poisoned").insert(id, cb);
+    providers()
+        .lock()
+        .expect("registry mutex poisoned")
+        .insert(id, cb);
     Ok(id)
 }
 
@@ -1146,7 +1173,10 @@ fn create_resilient_provider(
 
     let provider = builder.build();
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    providers().lock().expect("registry mutex poisoned").insert(id, provider);
+    providers()
+        .lock()
+        .expect("registry mutex poisoned")
+        .insert(id, provider);
     Ok(id)
 }
 
@@ -1257,7 +1287,10 @@ fn create_tool_validator(strategies: Option<Vec<String>>) -> u32 {
         None => RustToolValidator::new(),
     };
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    tool_validators().lock().expect("registry mutex poisoned").insert(id, validator);
+    tool_validators()
+        .lock()
+        .expect("registry mutex poisoned")
+        .insert(id, validator);
     id
 }
 

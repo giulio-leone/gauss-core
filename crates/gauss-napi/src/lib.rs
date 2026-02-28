@@ -103,7 +103,10 @@ pub fn create_provider(
     };
 
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    providers().lock().expect("registry mutex poisoned").insert(id, provider);
+    providers()
+        .lock()
+        .expect("registry mutex poisoned")
+        .insert(id, provider);
     Ok(id)
 }
 
@@ -966,13 +969,16 @@ pub fn cosine_similarity(a: Vec<f64>, b: Vec<f64>) -> f64 {
 #[napi]
 pub fn create_mcp_server(name: String, version_str: String) -> u32 {
     let id = next_handle();
-    mcp_server_registry().lock().expect("registry mutex poisoned").insert(
-        id,
-        Arc::new(tokio::sync::Mutex::new(mcp::McpServer::new(
-            name,
-            version_str,
-        ))),
-    );
+    mcp_server_registry()
+        .lock()
+        .expect("registry mutex poisoned")
+        .insert(
+            id,
+            Arc::new(tokio::sync::Mutex::new(mcp::McpServer::new(
+                name,
+                version_str,
+            ))),
+        );
     id
 }
 
@@ -1027,10 +1033,13 @@ pub fn destroy_mcp_server(handle: u32) -> Result<()> {
 #[napi]
 pub fn create_network() -> u32 {
     let id = next_handle();
-    network_registry().lock().expect("registry mutex poisoned").insert(
-        id,
-        Arc::new(tokio::sync::Mutex::new(network::AgentNetwork::new())),
-    );
+    network_registry()
+        .lock()
+        .expect("registry mutex poisoned")
+        .insert(
+            id,
+            Arc::new(tokio::sync::Mutex::new(network::AgentNetwork::new())),
+        );
     id
 }
 
@@ -1399,7 +1408,10 @@ pub fn eval_add_scorer(handle: u32, scorer_type: String) -> Result<()> {
             )));
         }
     };
-    runner.lock().expect("registry mutex poisoned").add_scorer(scorer);
+    runner
+        .lock()
+        .expect("registry mutex poisoned")
+        .add_scorer(scorer);
     Ok(())
 }
 
@@ -1435,10 +1447,13 @@ pub fn destroy_eval_runner(handle: u32) -> Result<()> {
 #[napi]
 pub fn create_telemetry() -> u32 {
     let id = next_handle();
-    telemetry_registry().lock().expect("registry mutex poisoned").insert(
-        id,
-        Arc::new(Mutex::new(telemetry::TelemetryCollector::new())),
-    );
+    telemetry_registry()
+        .lock()
+        .expect("registry mutex poisoned")
+        .insert(
+            id,
+            Arc::new(Mutex::new(telemetry::TelemetryCollector::new())),
+        );
     id
 }
 
@@ -1452,7 +1467,10 @@ pub fn telemetry_record_span(handle: u32, span_json: String) -> Result<()> {
         .ok_or_else(|| napi::Error::from_reason("TelemetryCollector not found"))?;
     let span: telemetry::SpanRecord = serde_json::from_str(&span_json)
         .map_err(|e| napi::Error::from_reason(format!("Invalid span: {e}")))?;
-    collector.lock().expect("registry mutex poisoned").record_span(span);
+    collector
+        .lock()
+        .expect("registry mutex poisoned")
+        .record_span(span);
     Ok(())
 }
 
@@ -1464,7 +1482,10 @@ pub fn telemetry_export_spans(handle: u32) -> Result<serde_json::Value> {
     let collector = guard
         .get(&handle)
         .ok_or_else(|| napi::Error::from_reason("TelemetryCollector not found"))?;
-    let spans = collector.lock().expect("registry mutex poisoned").export_spans();
+    let spans = collector
+        .lock()
+        .expect("registry mutex poisoned")
+        .export_spans();
     serde_json::to_value(&spans).map_err(|e| napi::Error::from_reason(format!("{e}")))
 }
 
@@ -1476,7 +1497,10 @@ pub fn telemetry_export_metrics(handle: u32) -> Result<serde_json::Value> {
     let collector = guard
         .get(&handle)
         .ok_or_else(|| napi::Error::from_reason("TelemetryCollector not found"))?;
-    let metrics = collector.lock().expect("registry mutex poisoned").export_metrics();
+    let metrics = collector
+        .lock()
+        .expect("registry mutex poisoned")
+        .export_metrics();
     serde_json::to_value(&metrics).map_err(|e| napi::Error::from_reason(format!("{e}")))
 }
 
@@ -1528,7 +1552,9 @@ pub fn guardrail_chain_add_content_moderation(
     block_patterns: Vec<String>,
     warn_patterns: Vec<String>,
 ) -> Result<()> {
-    let mut reg = guardrail_chain_registry().lock().expect("registry mutex poisoned");
+    let mut reg = guardrail_chain_registry()
+        .lock()
+        .expect("registry mutex poisoned");
     let chain = reg
         .get_mut(&handle)
         .ok_or_else(|| napi::Error::from_reason("GuardrailChain not found"))?;
@@ -1555,7 +1581,9 @@ pub fn guardrail_chain_add_pii_detection(handle: u32, action: String) -> Result<
             ));
         }
     };
-    let mut reg = guardrail_chain_registry().lock().expect("registry mutex poisoned");
+    let mut reg = guardrail_chain_registry()
+        .lock()
+        .expect("registry mutex poisoned");
     let chain = reg
         .get_mut(&handle)
         .ok_or_else(|| napi::Error::from_reason("GuardrailChain not found"))?;
@@ -1576,7 +1604,9 @@ pub fn guardrail_chain_add_token_limit(
     if let Some(m) = max_output {
         g = g.max_output(m as usize);
     }
-    let mut reg = guardrail_chain_registry().lock().expect("registry mutex poisoned");
+    let mut reg = guardrail_chain_registry()
+        .lock()
+        .expect("registry mutex poisoned");
     let chain = reg
         .get_mut(&handle)
         .ok_or_else(|| napi::Error::from_reason("GuardrailChain not found"))?;
@@ -1597,7 +1627,9 @@ pub fn guardrail_chain_add_regex_filter(
     for r in warn_rules {
         g = g.warn(&r, format!("Warning by regex: {r}"));
     }
-    let mut reg = guardrail_chain_registry().lock().expect("registry mutex poisoned");
+    let mut reg = guardrail_chain_registry()
+        .lock()
+        .expect("registry mutex poisoned");
     let chain = reg
         .get_mut(&handle)
         .ok_or_else(|| napi::Error::from_reason("GuardrailChain not found"))?;
@@ -1609,7 +1641,9 @@ pub fn guardrail_chain_add_regex_filter(
 pub fn guardrail_chain_add_schema(handle: u32, schema_json: String) -> Result<()> {
     let schema: serde_json::Value = serde_json::from_str(&schema_json)
         .map_err(|e| napi::Error::from_reason(format!("Invalid JSON schema: {e}")))?;
-    let mut reg = guardrail_chain_registry().lock().expect("registry mutex poisoned");
+    let mut reg = guardrail_chain_registry()
+        .lock()
+        .expect("registry mutex poisoned");
     let chain = reg
         .get_mut(&handle)
         .ok_or_else(|| napi::Error::from_reason("GuardrailChain not found"))?;
@@ -1619,7 +1653,9 @@ pub fn guardrail_chain_add_schema(handle: u32, schema_json: String) -> Result<()
 
 #[napi]
 pub fn guardrail_chain_list(handle: u32) -> Result<Vec<String>> {
-    let reg = guardrail_chain_registry().lock().expect("registry mutex poisoned");
+    let reg = guardrail_chain_registry()
+        .lock()
+        .expect("registry mutex poisoned");
     let chain = reg
         .get(&handle)
         .ok_or_else(|| napi::Error::from_reason("GuardrailChain not found"))?;
@@ -1655,7 +1691,10 @@ pub fn create_fallback_provider(provider_handles: Vec<u32>) -> Result<u32> {
 
     let fallback = Arc::new(resilience::FallbackProvider::new(providers_vec));
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    providers().lock().expect("registry mutex poisoned").insert(id, fallback);
+    providers()
+        .lock()
+        .expect("registry mutex poisoned")
+        .insert(id, fallback);
     Ok(id)
 }
 
@@ -1680,7 +1719,10 @@ pub fn create_circuit_breaker(
 
     let cb = Arc::new(resilience::CircuitBreaker::new(inner, config));
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    providers().lock().expect("registry mutex poisoned").insert(id, cb);
+    providers()
+        .lock()
+        .expect("registry mutex poisoned")
+        .insert(id, cb);
     Ok(id)
 }
 
@@ -1714,7 +1756,10 @@ pub fn create_resilient_provider(
 
     let provider = builder.build();
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    providers().lock().expect("registry mutex poisoned").insert(id, provider);
+    providers()
+        .lock()
+        .expect("registry mutex poisoned")
+        .insert(id, provider);
     Ok(id)
 }
 
@@ -1749,7 +1794,9 @@ pub fn create_plugin_registry() -> u32 {
 
 #[napi]
 pub fn plugin_registry_add_telemetry(handle: u32) -> Result<()> {
-    let mut reg = plugin_registry_reg().lock().expect("registry mutex poisoned");
+    let mut reg = plugin_registry_reg()
+        .lock()
+        .expect("registry mutex poisoned");
     let registry = reg
         .get_mut(&handle)
         .ok_or_else(|| napi::Error::from_reason("PluginRegistry not found"))?;
@@ -1759,7 +1806,9 @@ pub fn plugin_registry_add_telemetry(handle: u32) -> Result<()> {
 
 #[napi]
 pub fn plugin_registry_add_memory(handle: u32) -> Result<()> {
-    let mut reg = plugin_registry_reg().lock().expect("registry mutex poisoned");
+    let mut reg = plugin_registry_reg()
+        .lock()
+        .expect("registry mutex poisoned");
     let registry = reg
         .get_mut(&handle)
         .ok_or_else(|| napi::Error::from_reason("PluginRegistry not found"))?;
@@ -1769,7 +1818,9 @@ pub fn plugin_registry_add_memory(handle: u32) -> Result<()> {
 
 #[napi]
 pub fn plugin_registry_list(handle: u32) -> Result<Vec<String>> {
-    let reg = plugin_registry_reg().lock().expect("registry mutex poisoned");
+    let reg = plugin_registry_reg()
+        .lock()
+        .expect("registry mutex poisoned");
     let registry = reg
         .get(&handle)
         .ok_or_else(|| napi::Error::from_reason("PluginRegistry not found"))?;
@@ -1780,7 +1831,9 @@ pub fn plugin_registry_list(handle: u32) -> Result<Vec<String>> {
 pub fn plugin_registry_emit(handle: u32, event_json: String) -> Result<()> {
     let event: plugin::GaussEvent = serde_json::from_str(&event_json)
         .map_err(|e| napi::Error::from_reason(format!("Invalid event JSON: {e}")))?;
-    let reg = plugin_registry_reg().lock().expect("registry mutex poisoned");
+    let reg = plugin_registry_reg()
+        .lock()
+        .expect("registry mutex poisoned");
     let registry = reg
         .get(&handle)
         .ok_or_else(|| napi::Error::from_reason("PluginRegistry not found"))?;
@@ -1829,13 +1882,18 @@ pub fn create_tool_validator(strategies: Option<Vec<String>>) -> u32 {
         None => RustToolValidator::new(),
     };
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    tool_validator_reg().lock().expect("registry mutex poisoned").insert(id, validator);
+    tool_validator_reg()
+        .lock()
+        .expect("registry mutex poisoned")
+        .insert(id, validator);
     id
 }
 
 #[napi]
 pub fn tool_validator_validate(handle: u32, input: String, schema: String) -> Result<String> {
-    let reg = tool_validator_reg().lock().expect("registry mutex poisoned");
+    let reg = tool_validator_reg()
+        .lock()
+        .expect("registry mutex poisoned");
     let validator = reg
         .get(&handle)
         .ok_or_else(|| napi::Error::from_reason("ToolValidator not found"))?;
