@@ -633,3 +633,73 @@ pub fn destroy_telemetry(handle: u32) -> Result<(), JsValue> {
         .ok_or_else(|| err("TelemetryCollector not found"))?;
     Ok(())
 }
+
+// ============ Stream Transform (WASM) ============
+
+use gauss_core::stream_transform;
+
+#[wasm_bindgen(js_name = "parsePartialJson")]
+pub fn parse_partial_json(text: &str) -> Option<String> {
+    stream_transform::parse_partial_json(text).map(|v| v.to_string())
+}
+
+// ============ Plugin System (WASM) ============
+
+use gauss_core::plugin;
+
+thread_local! {
+    static PLUGIN_REGISTRIES: RefCell<HashMap<u32, plugin::PluginRegistry>> = RefCell::new(HashMap::new());
+}
+
+#[wasm_bindgen(js_name = "createPluginRegistry")]
+pub fn create_plugin_registry() -> u32 {
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    PLUGIN_REGISTRIES.with(|r| {
+        r.borrow_mut().insert(id, plugin::PluginRegistry::new());
+    });
+    id
+}
+
+#[wasm_bindgen(js_name = "pluginRegistryAddTelemetry")]
+pub fn plugin_registry_add_telemetry(handle: u32) -> Result<(), JsValue> {
+    PLUGIN_REGISTRIES.with(|r| {
+        let mut reg = r.borrow_mut();
+        let registry = reg
+            .get_mut(&handle)
+            .ok_or_else(|| err("PluginRegistry not found"))?;
+        registry.register(Rc::new(plugin::TelemetryPlugin));
+        Ok(())
+    })
+}
+
+#[wasm_bindgen(js_name = "pluginRegistryAddMemory")]
+pub fn plugin_registry_add_memory(handle: u32) -> Result<(), JsValue> {
+    PLUGIN_REGISTRIES.with(|r| {
+        let mut reg = r.borrow_mut();
+        let registry = reg
+            .get_mut(&handle)
+            .ok_or_else(|| err("PluginRegistry not found"))?;
+        registry.register(Rc::new(plugin::MemoryPlugin));
+        Ok(())
+    })
+}
+
+#[wasm_bindgen(js_name = "pluginRegistryList")]
+pub fn plugin_registry_list(handle: u32) -> Result<String, JsValue> {
+    PLUGIN_REGISTRIES.with(|r| {
+        let reg = r.borrow();
+        let registry = reg
+            .get(&handle)
+            .ok_or_else(|| err("PluginRegistry not found"))?;
+        let names: Vec<&str> = registry.list();
+        Ok(serde_json::to_string(&names).unwrap_or_default())
+    })
+}
+
+#[wasm_bindgen(js_name = "destroyPluginRegistry")]
+pub fn destroy_plugin_registry(handle: u32) -> Result<(), JsValue> {
+    PLUGIN_REGISTRIES
+        .with(|r| r.borrow_mut().remove(&handle))
+        .ok_or_else(|| err("PluginRegistry not found"))?;
+    Ok(())
+}
