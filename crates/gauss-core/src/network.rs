@@ -14,7 +14,7 @@ use std::collections::HashMap;
 // ---------------------------------------------------------------------------
 
 /// Agent capability descriptor (following Google A2A spec).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentCard {
     pub name: String,
     pub description: String,

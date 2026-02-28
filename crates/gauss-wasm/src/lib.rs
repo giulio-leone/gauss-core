@@ -1,5 +1,10 @@
 use gauss_core::Shared;
 use gauss_core::agent::{Agent as RustAgent, StopCondition};
+use gauss_core::context;
+use gauss_core::eval;
+use gauss_core::hitl;
+use gauss_core::mcp;
+use gauss_core::memory;
 use gauss_core::message::Message as RustMessage;
 use gauss_core::provider::anthropic::AnthropicProvider;
 use gauss_core::provider::deepseek::DeepSeekProvider;
@@ -9,9 +14,12 @@ use gauss_core::provider::ollama::OllamaProvider;
 use gauss_core::provider::openai::OpenAiProvider;
 use gauss_core::provider::retry::{RetryConfig, RetryProvider};
 use gauss_core::provider::{GenerateOptions, Provider, ProviderConfig};
+use gauss_core::rag;
+use gauss_core::telemetry;
 use serde_json::json;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use wasm_bindgen::prelude::*;
 
@@ -192,4 +200,436 @@ pub async fn agent_run(
     });
 
     serde_json::to_string(&result).map_err(|e| JsValue::from_str(&format!("Serialize error: {e}")))
+}
+
+// ============ WASM Registries ============
+
+thread_local! {
+    static MEMORIES: RefCell<HashMap<u32, Rc<memory::InMemoryMemory>>> = RefCell::new(HashMap::new());
+    static VECTOR_STORES: RefCell<HashMap<u32, Rc<rag::InMemoryVectorStore>>> = RefCell::new(HashMap::new());
+    static MCP_SERVERS: RefCell<HashMap<u32, Rc<RefCell<mcp::McpServer>>>> = RefCell::new(HashMap::new());
+    static APPROVALS: RefCell<HashMap<u32, Rc<RefCell<hitl::ApprovalManager>>>> = RefCell::new(HashMap::new());
+    static CHECKPOINTS: RefCell<HashMap<u32, Rc<hitl::InMemoryCheckpointStore>>> = RefCell::new(HashMap::new());
+    static EVALS: RefCell<HashMap<u32, Rc<RefCell<eval::EvalRunner>>>> = RefCell::new(HashMap::new());
+    static COLLECTORS: RefCell<HashMap<u32, Rc<RefCell<telemetry::TelemetryCollector>>>> = RefCell::new(HashMap::new());
+}
+
+fn next_handle() -> u32 {
+    NEXT_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+fn err(msg: &str) -> JsValue {
+    JsValue::from_str(msg)
+}
+
+// ============ Memory ============
+
+#[wasm_bindgen(js_name = "createMemory")]
+pub fn create_memory() -> u32 {
+    let id = next_handle();
+    MEMORIES.with(|m| {
+        m.borrow_mut()
+            .insert(id, Rc::new(memory::InMemoryMemory::new()))
+    });
+    id
+}
+
+#[wasm_bindgen(js_name = "memoryStore")]
+pub async fn memory_store(handle: u32, entry_json: String) -> Result<(), JsValue> {
+    use memory::Memory;
+    let mem = MEMORIES
+        .with(|m| m.borrow().get(&handle).cloned())
+        .ok_or_else(|| err("Memory not found"))?;
+    let entry: memory::MemoryEntry =
+        serde_json::from_str(&entry_json).map_err(|e| err(&format!("Invalid entry: {e}")))?;
+    mem.store(entry).await.map_err(|e| err(&format!("{e}")))
+}
+
+#[wasm_bindgen(js_name = "memoryRecall")]
+pub async fn memory_recall(handle: u32, options_json: Option<String>) -> Result<String, JsValue> {
+    use memory::Memory;
+    let mem = MEMORIES
+        .with(|m| m.borrow().get(&handle).cloned())
+        .ok_or_else(|| err("Memory not found"))?;
+    let opts: memory::RecallOptions = match options_json {
+        Some(j) => serde_json::from_str(&j).map_err(|e| err(&format!("Invalid options: {e}")))?,
+        None => memory::RecallOptions::default(),
+    };
+    let entries = mem.recall(opts).await.map_err(|e| err(&format!("{e}")))?;
+    serde_json::to_string(&entries).map_err(|e| err(&format!("{e}")))
+}
+
+#[wasm_bindgen(js_name = "memoryClear")]
+pub async fn memory_clear(handle: u32, session_id: Option<String>) -> Result<(), JsValue> {
+    let mem = MEMORIES
+        .with(|m| m.borrow().get(&handle).cloned())
+        .ok_or_else(|| err("Memory not found"))?;
+    memory::Memory::clear(&*mem, session_id.as_deref())
+        .await
+        .map_err(|e| err(&format!("{e}")))
+}
+
+#[wasm_bindgen(js_name = "destroyMemory")]
+pub fn destroy_memory(handle: u32) -> Result<(), JsValue> {
+    MEMORIES
+        .with(|m| m.borrow_mut().remove(&handle))
+        .ok_or_else(|| err("Memory not found"))?;
+    Ok(())
+}
+
+// ============ Context ============
+
+#[wasm_bindgen(js_name = "countTokens")]
+pub fn count_tokens(text: &str) -> u32 {
+    context::count_tokens_approx(text) as u32
+}
+
+#[wasm_bindgen(js_name = "countMessageTokens")]
+pub fn count_message_tokens(messages_json: &str) -> Result<u32, JsValue> {
+    let msgs = parse_messages(messages_json)?;
+    Ok(context::count_messages_tokens(&msgs) as u32)
+}
+
+#[wasm_bindgen(js_name = "getContextWindowSize")]
+pub fn get_context_window_size(model: &str) -> u32 {
+    context::context_window_size(model) as u32
+}
+
+// ============ RAG ============
+
+#[wasm_bindgen(js_name = "createVectorStore")]
+pub fn create_vector_store() -> u32 {
+    let id = next_handle();
+    VECTOR_STORES.with(|v| {
+        v.borrow_mut()
+            .insert(id, Rc::new(rag::InMemoryVectorStore::new()))
+    });
+    id
+}
+
+#[wasm_bindgen(js_name = "vectorStoreUpsert")]
+pub async fn vector_store_upsert(handle: u32, chunks_json: String) -> Result<(), JsValue> {
+    use rag::VectorStore;
+    let store = VECTOR_STORES
+        .with(|v| v.borrow().get(&handle).cloned())
+        .ok_or_else(|| err("VectorStore not found"))?;
+    let chunks: Vec<rag::Chunk> =
+        serde_json::from_str(&chunks_json).map_err(|e| err(&format!("Invalid chunks: {e}")))?;
+    store.upsert(chunks).await.map_err(|e| err(&format!("{e}")))
+}
+
+#[wasm_bindgen(js_name = "vectorStoreSearch")]
+pub async fn vector_store_search(
+    handle: u32,
+    embedding_json: String,
+    top_k: u32,
+) -> Result<String, JsValue> {
+    use rag::VectorStore;
+    let store = VECTOR_STORES
+        .with(|v| v.borrow().get(&handle).cloned())
+        .ok_or_else(|| err("VectorStore not found"))?;
+    let embedding: Vec<f32> = serde_json::from_str(&embedding_json)
+        .map_err(|e| err(&format!("Invalid embedding: {e}")))?;
+    let results = store
+        .search(&embedding, top_k as usize)
+        .await
+        .map_err(|e| err(&format!("{e}")))?;
+    serde_json::to_string(&results).map_err(|e| err(&format!("{e}")))
+}
+
+#[wasm_bindgen(js_name = "destroyVectorStore")]
+pub fn destroy_vector_store(handle: u32) -> Result<(), JsValue> {
+    VECTOR_STORES
+        .with(|v| v.borrow_mut().remove(&handle))
+        .ok_or_else(|| err("VectorStore not found"))?;
+    Ok(())
+}
+
+#[wasm_bindgen(js_name = "cosineSimilarity")]
+pub fn cosine_similarity(a_json: &str, b_json: &str) -> Result<f64, JsValue> {
+    let a: Vec<f32> = serde_json::from_str(a_json).map_err(|e| err(&format!("{e}")))?;
+    let b: Vec<f32> = serde_json::from_str(b_json).map_err(|e| err(&format!("{e}")))?;
+    Ok(rag::cosine_similarity(&a, &b) as f64)
+}
+
+// ============ MCP ============
+
+#[wasm_bindgen(js_name = "createMcpServer")]
+pub fn create_mcp_server(name: &str, version_str: &str) -> u32 {
+    let id = next_handle();
+    MCP_SERVERS.with(|s| {
+        s.borrow_mut().insert(
+            id,
+            Rc::new(RefCell::new(mcp::McpServer::new(name, version_str))),
+        )
+    });
+    id
+}
+
+#[wasm_bindgen(js_name = "mcpServerAddTool")]
+pub fn mcp_server_add_tool(handle: u32, tool_json: String) -> Result<(), JsValue> {
+    let server = MCP_SERVERS
+        .with(|s| s.borrow().get(&handle).cloned())
+        .ok_or_else(|| err("McpServer not found"))?;
+    let mcp_tool: mcp::McpTool =
+        serde_json::from_str(&tool_json).map_err(|e| err(&format!("Invalid tool: {e}")))?;
+    let gauss_tool = mcp::mcp_tool_to_gauss(&mcp_tool);
+    server.borrow_mut().add_tool(gauss_tool);
+    Ok(())
+}
+
+#[wasm_bindgen(js_name = "mcpServerHandle")]
+pub async fn mcp_server_handle(handle: u32, message_json: String) -> Result<String, JsValue> {
+    let server = MCP_SERVERS
+        .with(|s| s.borrow().get(&handle).cloned())
+        .ok_or_else(|| err("McpServer not found"))?;
+    let msg: mcp::JsonRpcMessage =
+        serde_json::from_str(&message_json).map_err(|e| err(&format!("Invalid message: {e}")))?;
+    let resp = server
+        .borrow()
+        .handle_message(msg)
+        .await
+        .map_err(|e| err(&format!("{e}")))?;
+    serde_json::to_string(&resp).map_err(|e| err(&format!("{e}")))
+}
+
+#[wasm_bindgen(js_name = "destroyMcpServer")]
+pub fn destroy_mcp_server(handle: u32) -> Result<(), JsValue> {
+    MCP_SERVERS
+        .with(|s| s.borrow_mut().remove(&handle))
+        .ok_or_else(|| err("McpServer not found"))?;
+    Ok(())
+}
+
+// ============ HITL ============
+
+#[wasm_bindgen(js_name = "createApprovalManager")]
+pub fn create_approval_manager() -> u32 {
+    let id = next_handle();
+    APPROVALS.with(|a| {
+        a.borrow_mut()
+            .insert(id, Rc::new(RefCell::new(hitl::ApprovalManager::new())))
+    });
+    id
+}
+
+#[wasm_bindgen(js_name = "approvalRequest")]
+pub fn approval_request(
+    handle: u32,
+    tool_name: String,
+    args_json: String,
+    session_id: String,
+) -> Result<String, JsValue> {
+    let mgr = APPROVALS
+        .with(|a| a.borrow().get(&handle).cloned())
+        .ok_or_else(|| err("ApprovalManager not found"))?;
+    let args: serde_json::Value =
+        serde_json::from_str(&args_json).map_err(|e| err(&format!("Invalid args: {e}")))?;
+    let req = mgr
+        .borrow()
+        .request_approval(tool_name, args, 0, session_id)
+        .map_err(|e| err(&format!("{e}")))?;
+    Ok(req.id.clone())
+}
+
+#[wasm_bindgen(js_name = "approvalApprove")]
+pub fn approval_approve(
+    handle: u32,
+    request_id: &str,
+    modified_args: Option<String>,
+) -> Result<(), JsValue> {
+    let mgr = APPROVALS
+        .with(|a| a.borrow().get(&handle).cloned())
+        .ok_or_else(|| err("ApprovalManager not found"))?;
+    let args: Option<serde_json::Value> = match modified_args {
+        Some(j) => Some(serde_json::from_str(&j).map_err(|e| err(&format!("{e}")))?),
+        None => None,
+    };
+    mgr.borrow()
+        .approve(request_id, args)
+        .map_err(|e| err(&format!("{e}")))?;
+    Ok(())
+}
+
+#[wasm_bindgen(js_name = "approvalDeny")]
+pub fn approval_deny(handle: u32, request_id: &str, reason: Option<String>) -> Result<(), JsValue> {
+    let mgr = APPROVALS
+        .with(|a| a.borrow().get(&handle).cloned())
+        .ok_or_else(|| err("ApprovalManager not found"))?;
+    mgr.borrow()
+        .deny(request_id, reason)
+        .map_err(|e| err(&format!("{e}")))?;
+    Ok(())
+}
+
+#[wasm_bindgen(js_name = "approvalListPending")]
+pub fn approval_list_pending(handle: u32) -> Result<String, JsValue> {
+    let mgr = APPROVALS
+        .with(|a| a.borrow().get(&handle).cloned())
+        .ok_or_else(|| err("ApprovalManager not found"))?;
+    let pending = mgr
+        .borrow()
+        .list_pending()
+        .map_err(|e| err(&format!("{e}")))?;
+    serde_json::to_string(&pending).map_err(|e| err(&format!("{e}")))
+}
+
+#[wasm_bindgen(js_name = "destroyApprovalManager")]
+pub fn destroy_approval_manager(handle: u32) -> Result<(), JsValue> {
+    APPROVALS
+        .with(|a| a.borrow_mut().remove(&handle))
+        .ok_or_else(|| err("ApprovalManager not found"))?;
+    Ok(())
+}
+
+// ============ Checkpoint Store ============
+
+#[wasm_bindgen(js_name = "createCheckpointStore")]
+pub fn create_checkpoint_store() -> u32 {
+    let id = next_handle();
+    CHECKPOINTS.with(|c| {
+        c.borrow_mut()
+            .insert(id, Rc::new(hitl::InMemoryCheckpointStore::new()))
+    });
+    id
+}
+
+#[wasm_bindgen(js_name = "checkpointSave")]
+pub async fn checkpoint_save(handle: u32, checkpoint_json: String) -> Result<(), JsValue> {
+    use hitl::CheckpointStore;
+    let store = CHECKPOINTS
+        .with(|c| c.borrow().get(&handle).cloned())
+        .ok_or_else(|| err("CheckpointStore not found"))?;
+    let cp: hitl::Checkpoint = serde_json::from_str(&checkpoint_json)
+        .map_err(|e| err(&format!("Invalid checkpoint: {e}")))?;
+    store.save(&cp).await.map_err(|e| err(&format!("{e}")))
+}
+
+#[wasm_bindgen(js_name = "checkpointLoad")]
+pub async fn checkpoint_load(handle: u32, checkpoint_id: &str) -> Result<String, JsValue> {
+    use hitl::CheckpointStore;
+    let store = CHECKPOINTS
+        .with(|c| c.borrow().get(&handle).cloned())
+        .ok_or_else(|| err("CheckpointStore not found"))?;
+    let cp = store
+        .load(checkpoint_id)
+        .await
+        .map_err(|e| err(&format!("{e}")))?;
+    serde_json::to_string(&cp).map_err(|e| err(&format!("{e}")))
+}
+
+#[wasm_bindgen(js_name = "destroyCheckpointStore")]
+pub fn destroy_checkpoint_store(handle: u32) -> Result<(), JsValue> {
+    CHECKPOINTS
+        .with(|c| c.borrow_mut().remove(&handle))
+        .ok_or_else(|| err("CheckpointStore not found"))?;
+    Ok(())
+}
+
+// ============ Eval ============
+
+#[wasm_bindgen(js_name = "createEvalRunner")]
+pub fn create_eval_runner(threshold: Option<f64>) -> u32 {
+    let id = next_handle();
+    let mut runner = eval::EvalRunner::new();
+    if let Some(t) = threshold {
+        runner = runner.with_threshold(t);
+    }
+    EVALS.with(|e| e.borrow_mut().insert(id, Rc::new(RefCell::new(runner))));
+    id
+}
+
+#[wasm_bindgen(js_name = "evalAddScorer")]
+pub fn eval_add_scorer(handle: u32, scorer_type: &str) -> Result<(), JsValue> {
+    let runner = EVALS
+        .with(|e| e.borrow().get(&handle).cloned())
+        .ok_or_else(|| err("EvalRunner not found"))?;
+    let scorer: Rc<dyn eval::Scorer> = match scorer_type {
+        "exact_match" => Rc::new(eval::ExactMatchScorer),
+        "contains" => Rc::new(eval::ContainsScorer),
+        "length_ratio" => Rc::new(eval::LengthRatioScorer),
+        other => return Err(err(&format!("Unknown scorer: {other}"))),
+    };
+    runner.borrow_mut().add_scorer(scorer);
+    Ok(())
+}
+
+#[wasm_bindgen(js_name = "loadDatasetJsonl")]
+pub fn load_dataset_jsonl(jsonl: &str) -> Result<String, JsValue> {
+    let cases = eval::load_dataset_jsonl(jsonl).map_err(|e| err(&format!("{e}")))?;
+    serde_json::to_string(&cases).map_err(|e| err(&format!("{e}")))
+}
+
+#[wasm_bindgen(js_name = "loadDatasetJson")]
+pub fn load_dataset_json(json_str: &str) -> Result<String, JsValue> {
+    let cases = eval::load_dataset_json(json_str).map_err(|e| err(&format!("{e}")))?;
+    serde_json::to_string(&cases).map_err(|e| err(&format!("{e}")))
+}
+
+#[wasm_bindgen(js_name = "destroyEvalRunner")]
+pub fn destroy_eval_runner(handle: u32) -> Result<(), JsValue> {
+    EVALS
+        .with(|e| e.borrow_mut().remove(&handle))
+        .ok_or_else(|| err("EvalRunner not found"))?;
+    Ok(())
+}
+
+// ============ Telemetry ============
+
+#[wasm_bindgen(js_name = "createTelemetry")]
+pub fn create_telemetry() -> u32 {
+    let id = next_handle();
+    COLLECTORS.with(|c| {
+        c.borrow_mut().insert(
+            id,
+            Rc::new(RefCell::new(telemetry::TelemetryCollector::new())),
+        )
+    });
+    id
+}
+
+#[wasm_bindgen(js_name = "telemetryRecordSpan")]
+pub fn telemetry_record_span(handle: u32, span_json: &str) -> Result<(), JsValue> {
+    let coll = COLLECTORS
+        .with(|c| c.borrow().get(&handle).cloned())
+        .ok_or_else(|| err("TelemetryCollector not found"))?;
+    let span: telemetry::SpanRecord =
+        serde_json::from_str(span_json).map_err(|e| err(&format!("Invalid span: {e}")))?;
+    coll.borrow().record_span(span);
+    Ok(())
+}
+
+#[wasm_bindgen(js_name = "telemetryExportSpans")]
+pub fn telemetry_export_spans(handle: u32) -> Result<String, JsValue> {
+    let coll = COLLECTORS
+        .with(|c| c.borrow().get(&handle).cloned())
+        .ok_or_else(|| err("TelemetryCollector not found"))?;
+    let spans = coll.borrow().export_spans();
+    serde_json::to_string(&spans).map_err(|e| err(&format!("{e}")))
+}
+
+#[wasm_bindgen(js_name = "telemetryExportMetrics")]
+pub fn telemetry_export_metrics(handle: u32) -> Result<String, JsValue> {
+    let coll = COLLECTORS
+        .with(|c| c.borrow().get(&handle).cloned())
+        .ok_or_else(|| err("TelemetryCollector not found"))?;
+    let metrics = coll.borrow().export_metrics();
+    serde_json::to_string(&metrics).map_err(|e| err(&format!("{e}")))
+}
+
+#[wasm_bindgen(js_name = "telemetryClear")]
+pub fn telemetry_clear(handle: u32) -> Result<(), JsValue> {
+    let coll = COLLECTORS
+        .with(|c| c.borrow().get(&handle).cloned())
+        .ok_or_else(|| err("TelemetryCollector not found"))?;
+    coll.borrow().clear();
+    Ok(())
+}
+
+#[wasm_bindgen(js_name = "destroyTelemetry")]
+pub fn destroy_telemetry(handle: u32) -> Result<(), JsValue> {
+    COLLECTORS
+        .with(|c| c.borrow_mut().remove(&handle))
+        .ok_or_else(|| err("TelemetryCollector not found"))?;
+    Ok(())
 }
