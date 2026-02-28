@@ -57,6 +57,9 @@ pub enum GaussError {
 
     #[error("No content generated")]
     NoContentGenerated,
+
+    #[error("Internal error: {message}")]
+    Internal { message: String },
 }
 
 impl GaussError {
@@ -94,6 +97,12 @@ impl GaussError {
     pub fn authentication(provider: impl Into<String>, _message: impl Into<String>) -> Self {
         Self::Authentication {
             provider: provider.into(),
+        }
+    }
+
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self::Internal {
+            message: message.into(),
         }
     }
 }
