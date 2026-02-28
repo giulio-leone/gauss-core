@@ -3,7 +3,7 @@
  * Falls back to WASM if NAPI is unavailable.
  */
 
-import type { ProviderType, ProviderOptions, Message, AgentOptions, AgentResult, GenerateResult, ToolDef } from './types.js';
+import type { ProviderType, ProviderOptions, Message, AgentOptions, AgentResult, GenerateResult, GenerateWithToolsResult, ToolDef } from './types.js';
 
 /** Backend interface — both NAPI and WASM implement this. */
 export interface Backend {
@@ -15,12 +15,27 @@ export interface Backend {
     temperature?: number,
     maxTokens?: number,
   ): Promise<GenerateResult>;
+  generateWithTools(
+    handle: number,
+    messages: Message[],
+    tools: Array<Omit<ToolDef, 'execute'>>,
+    temperature?: number,
+    maxTokens?: number,
+  ): Promise<GenerateWithToolsResult>;
   agentRun(
     name: string,
     providerHandle: number,
     tools: Array<Omit<ToolDef, 'execute'>>,
     messages: Message[],
     options: AgentOptions,
+  ): Promise<AgentResult>;
+  agentRunWithToolExecutor(
+    name: string,
+    providerHandle: number,
+    tools: Array<Omit<ToolDef, 'execute'>>,
+    messages: Message[],
+    options: AgentOptions,
+    toolExecutor: (callJson: string) => Promise<string>,
   ): Promise<AgentResult>;
 }
 
@@ -122,6 +137,54 @@ function createNapiBackend(napi: any): Backend {
         structuredOutput: result.structuredOutput ?? undefined,
       };
     },
+
+    async generateWithTools(handle, messages, tools, temperature, maxTokens) {
+      const result = await napi.generateWithTools(
+        handle,
+        messages.map((m: Message) => ({ role: m.role, content: m.content })),
+        tools.map((t) => ({
+          name: t.name,
+          description: t.description,
+          parameters: t.parameters ?? null,
+        })),
+        temperature ?? null,
+        maxTokens ?? null,
+      );
+      return result as GenerateWithToolsResult;
+    },
+
+    async agentRunWithToolExecutor(name, providerHandle, tools, messages, options, toolExecutor) {
+      const result = await napi.agentRunWithToolExecutor(
+        name,
+        providerHandle,
+        tools.map((t) => ({
+          name: t.name,
+          description: t.description,
+          parameters: t.parameters ?? null,
+        })),
+        messages.map((m) => ({ role: m.role, content: m.content })),
+        {
+          instructions: options.instructions ?? null,
+          maxSteps: options.maxSteps ?? null,
+          temperature: options.temperature ?? null,
+          topP: options.topP ?? null,
+          maxTokens: options.maxTokens ?? null,
+          seed: options.seed ?? null,
+          stopOnTool: options.stopOnTool ?? null,
+          outputSchema: options.outputSchema ?? null,
+        },
+        toolExecutor,
+      );
+      return {
+        text: result.text,
+        steps: result.steps,
+        usage: {
+          inputTokens: result.inputTokens,
+          outputTokens: result.outputTokens,
+        },
+        structuredOutput: result.structuredOutput ?? undefined,
+      };
+    },
   };
 }
 
@@ -161,6 +224,22 @@ function createWasmBackend(wasm: any): Backend {
         }),
       );
       return JSON.parse(json) as AgentResult;
+    },
+
+    async generateWithTools(handle, messages, _tools, temperature, maxTokens) {
+      // WASM fallback: generate without tools
+      const json = await wasm.generate(
+        handle,
+        JSON.stringify(messages),
+        temperature ?? undefined,
+        maxTokens ?? undefined,
+      );
+      return { ...JSON.parse(json), toolCalls: [] } as GenerateWithToolsResult;
+    },
+
+    async agentRunWithToolExecutor(name, providerHandle, _tools, messages, options, _toolExecutor) {
+      // WASM fallback: run without tool executor (tools not supported in WASM)
+      return this.agentRun(name, providerHandle, _tools, messages, options);
     },
   };
 }

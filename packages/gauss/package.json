@@ -32,6 +32,7 @@
   "author": "Giulio Leone",
   "license": "MIT",
   "devDependencies": {
+    "@types/node": "^25.3.2",
     "tsup": "^8.0.0",
     "typescript": "^5.7.0"
   }

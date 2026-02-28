@@ -22,6 +22,7 @@ use gauss_core::rag;
 use gauss_core::telemetry;
 use gauss_core::tool::Tool as RustTool;
 use napi::bindgen_prelude::*;
+use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction};
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -256,6 +257,125 @@ pub async fn agent_run(
     Ok(rust_output_to_js(output))
 }
 
+// ============ Agent.run() with JS Tool Execution ============
+
+/// Run an agent where tool execution is delegated back to JavaScript.
+/// The `tool_executor` callback is invoked for each tool call:
+///   (callJson: string) => Promise<string>
+/// callJson = `{"tool":"<name>","args":{...}}`
+/// Return value = JSON string of the tool result.
+#[napi]
+pub async fn agent_run_with_tool_executor(
+    name: String,
+    provider_handle: u32,
+    tools: Vec<ToolDef>,
+    messages: Vec<JsMessage>,
+    options: Option<AgentOptions>,
+    #[napi(ts_arg_type = "(callJson: string) => Promise<string>")]
+    tool_executor: ThreadsafeFunction<String, ErrorStrategy::Fatal>,
+) -> Result<AgentResult> {
+    let provider = get_provider(provider_handle)?;
+    let opts = options.unwrap_or(AgentOptions {
+        instructions: None,
+        max_steps: None,
+        temperature: None,
+        top_p: None,
+        max_tokens: None,
+        seed: None,
+        stop_on_tool: None,
+        output_schema: None,
+    });
+
+    let mut builder = RustAgent::builder(name, provider);
+
+    if let Some(instructions) = opts.instructions {
+        builder = builder.instructions(instructions);
+    }
+    if let Some(max_steps) = opts.max_steps {
+        builder = builder.max_steps(max_steps as usize);
+    }
+    if let Some(temp) = opts.temperature {
+        builder = builder.temperature(temp);
+    }
+    if let Some(tp) = opts.top_p {
+        builder = builder.top_p(tp);
+    }
+    if let Some(mt) = opts.max_tokens {
+        builder = builder.max_tokens(mt);
+    }
+    if let Some(seed) = opts.seed {
+        builder = builder.seed(seed as u64);
+    }
+    if let Some(ref schema) = opts.output_schema {
+        builder = builder.output_schema(schema.clone());
+    }
+    if let Some(tool_name) = opts.stop_on_tool {
+        builder = builder.stop_when(StopCondition::HasToolCall(tool_name));
+    }
+
+    let tool_executor = Arc::new(tool_executor);
+
+    for td in &tools {
+        let tool_exec = tool_executor.clone();
+        let tool_name = td.name.clone();
+
+        let mut tool_builder = RustTool::builder(&td.name, &td.description);
+        if let Some(ref params) = td.parameters {
+            tool_builder = tool_builder.parameters_json(params.clone());
+        }
+
+        tool_builder = tool_builder.execute(move |args: serde_json::Value| {
+            let exec = tool_exec.clone();
+            let tn = tool_name.clone();
+            async move {
+                let call_json = serde_json::to_string(&json!({
+                    "tool": tn,
+                    "args": args
+                }))
+                .map_err(|e| {
+                    gauss_core::error::GaussError::tool(&tn, &format!("Serialize: {e}"))
+                })?;
+
+                let promise: Promise<String> = exec
+                    .call_async::<Promise<String>>(call_json)
+                    .await
+                    .map_err(|e| {
+                        gauss_core::error::GaussError::tool(
+                            &tn,
+                            &format!("NAPI call error: {e}"),
+                        )
+                    })?;
+
+                let result_str = promise.await.map_err(|e| {
+                    gauss_core::error::GaussError::tool(
+                        &tn,
+                        &format!("JS Promise error: {e}"),
+                    )
+                })?;
+
+                serde_json::from_str(&result_str).map_err(|e| {
+                    gauss_core::error::GaussError::tool(
+                        &tn,
+                        &format!("Deserialize: {e}"),
+                    )
+                })
+            }
+        });
+
+        builder = builder.tool(tool_builder.build());
+    }
+
+    let agent = builder.build();
+    let rust_messages: Vec<RustMessage> = messages.iter().map(js_message_to_rust).collect();
+
+    let output = agent
+        .run(rust_messages)
+        .await
+        .map_err(|e| napi::Error::from_reason(format!("Agent error: {e}")))?;
+
+    Ok(rust_output_to_js(output))
+}
+
 // ============ Direct Provider Call ============
 
 /// Call a provider directly (without agent loop).
@@ -284,6 +404,65 @@ pub async fn generate(
 
     Ok(json!({
         "text": text,
+        "usage": {
+            "inputTokens": result.usage.input_tokens,
+            "outputTokens": result.usage.output_tokens,
+        },
+        "finishReason": format!("{:?}", result.finish_reason),
+    }))
+}
+
+/// Call a provider with tool definitions. Returns tool calls if the model requests them.
+#[napi]
+pub async fn generate_with_tools(
+    provider_handle: u32,
+    messages: Vec<JsMessage>,
+    tools: Vec<ToolDef>,
+    temperature: Option<f64>,
+    max_tokens: Option<u32>,
+) -> Result<serde_json::Value> {
+    let provider = get_provider(provider_handle)?;
+    let rust_msgs: Vec<RustMessage> = messages.iter().map(js_message_to_rust).collect();
+
+    let rust_tools: Vec<RustTool> = tools
+        .iter()
+        .map(|td| {
+            let mut tb = RustTool::builder(&td.name, &td.description);
+            if let Some(ref params) = td.parameters {
+                tb = tb.parameters_json(params.clone());
+            }
+            tb.build()
+        })
+        .collect();
+
+    let opts = GenerateOptions {
+        temperature,
+        max_tokens,
+        ..GenerateOptions::default()
+    };
+
+    let result = provider
+        .generate(&rust_msgs, &rust_tools, &opts)
+        .await
+        .map_err(|e| napi::Error::from_reason(format!("Generate error: {e}")))?;
+
+    let text = result.text().unwrap_or("").to_string();
+    let tool_calls: Vec<serde_json::Value> = result
+        .message
+        .tool_calls()
+        .into_iter()
+        .map(|(id, name, args)| {
+            json!({
+                "id": id,
+                "name": name,
+                "args": args,
+            })
+        })
+        .collect();
+
+    Ok(json!({
+        "text": text,
+        "toolCalls": tool_calls,
         "usage": {
             "inputTokens": result.usage.input_tokens,
             "outputTokens": result.usage.output_tokens,

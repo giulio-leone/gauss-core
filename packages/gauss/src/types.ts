@@ -57,3 +57,12 @@ export interface GenerateResult {
   };
   finishReason: string;
 }
+
+/** Generation result with tool calls. */
+export interface GenerateWithToolsResult extends GenerateResult {
+  toolCalls: Array<{
+    id: string;
+    name: string;
+    args: Record<string, unknown>;
+  }>;
+}
