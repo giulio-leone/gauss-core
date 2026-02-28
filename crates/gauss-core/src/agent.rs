@@ -494,8 +494,7 @@ impl Agent {
     pub async fn run_stream(
         &self,
         messages: Vec<Message>,
-    ) -> error::Result<Pin<Box<dyn Stream<Item = error::Result<AgentStreamEvent>> + '_>>>
-    {
+    ) -> error::Result<Pin<Box<dyn Stream<Item = error::Result<AgentStreamEvent>> + '_>>> {
         // Delegate to the same internal logic via run() for WASM
         // Full streaming support on WASM requires further async refactoring
         let output = self.run(messages).await?;

@@ -43,11 +43,7 @@ async fn test_groq_provider_generate() {
     assert_eq!(provider.model(), "llama-3.3-70b-versatile");
 
     let result = provider
-        .generate(
-            &[Message::user("hello")],
-            &[],
-            &GenerateOptions::default(),
-        )
+        .generate(&[Message::user("hello")], &[], &GenerateOptions::default())
         .await
         .unwrap();
 
@@ -82,11 +78,7 @@ async fn test_ollama_provider_generate() {
     assert_eq!(provider.model(), "llama3.3");
 
     let result = provider
-        .generate(
-            &[Message::user("hello")],
-            &[],
-            &GenerateOptions::default(),
-        )
+        .generate(&[Message::user("hello")], &[], &GenerateOptions::default())
         .await
         .unwrap();
 
@@ -121,11 +113,7 @@ async fn test_deepseek_provider_generate() {
     assert_eq!(provider.model(), "deepseek-chat");
 
     let result = provider
-        .generate(
-            &[Message::user("hello")],
-            &[],
-            &GenerateOptions::default(),
-        )
+        .generate(&[Message::user("hello")], &[], &GenerateOptions::default())
         .await
         .unwrap();
 

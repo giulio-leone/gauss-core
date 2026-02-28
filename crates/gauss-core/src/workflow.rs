@@ -36,14 +36,13 @@ pub type StepExecuteFn = std::sync::Arc<
 #[cfg(target_arch = "wasm32")]
 pub type StepExecuteFn = std::rc::Rc<
     dyn Fn(
-            HashMap<String, StepOutput>,
-        ) -> Pin<Box<dyn std::future::Future<Output = error::Result<StepOutput>>>>
+        HashMap<String, StepOutput>,
+    ) -> Pin<Box<dyn std::future::Future<Output = error::Result<StepOutput>>>>,
 >;
 
 /// Type alias for router functions.
 #[cfg(not(target_arch = "wasm32"))]
-pub type StepRouteFn =
-    std::sync::Arc<dyn Fn(&HashMap<String, StepOutput>) -> String + Send + Sync>;
+pub type StepRouteFn = std::sync::Arc<dyn Fn(&HashMap<String, StepOutput>) -> String + Send + Sync>;
 #[cfg(target_arch = "wasm32")]
 pub type StepRouteFn = std::rc::Rc<dyn Fn(&HashMap<String, StepOutput>) -> String>;
 

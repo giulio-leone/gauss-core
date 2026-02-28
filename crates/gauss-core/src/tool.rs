@@ -54,9 +54,7 @@ pub type ToolExecuteFn = Arc<
 
 #[cfg(target_arch = "wasm32")]
 pub type ToolExecuteFn = std::rc::Rc<
-    dyn Fn(
-            serde_json::Value,
-        ) -> Pin<Box<dyn Future<Output = error::Result<serde_json::Value>>>>
+    dyn Fn(serde_json::Value) -> Pin<Box<dyn Future<Output = error::Result<serde_json::Value>>>>,
 >;
 
 /// A tool that can be used by an agent.

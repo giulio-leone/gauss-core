@@ -387,8 +387,7 @@ impl Provider for OpenAiProvider {
         messages: &[Message],
         tools: &[Tool],
         options: &GenerateOptions,
-    ) -> error::Result<crate::provider::BoxStream>
-    {
+    ) -> error::Result<crate::provider::BoxStream> {
         let body = self.build_request_body(messages, tools, options, true);
         let url = format!("{}/chat/completions", self.base_url());
 

@@ -135,8 +135,7 @@ impl Provider for RetryProvider {
         messages: &[Message],
         tools: &[Tool],
         options: &GenerateOptions,
-    ) -> error::Result<crate::provider::BoxStream>
-    {
+    ) -> error::Result<crate::provider::BoxStream> {
         let mut last_error = None;
 
         for attempt in 0..=self.config.max_retries {

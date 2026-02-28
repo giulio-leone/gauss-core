@@ -1,3 +1,4 @@
+use gauss_core::Shared;
 use gauss_core::agent::{Agent as RustAgent, StopCondition};
 use gauss_core::message::Message as RustMessage;
 use gauss_core::provider::anthropic::AnthropicProvider;
@@ -10,7 +11,6 @@ use gauss_core::provider::retry::{RetryConfig, RetryProvider};
 use gauss_core::provider::{GenerateOptions, Provider, ProviderConfig};
 use serde_json::json;
 use std::cell::RefCell;
-use gauss_core::Shared;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use wasm_bindgen::prelude::*;

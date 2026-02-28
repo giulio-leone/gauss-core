@@ -162,7 +162,9 @@ pub trait Provider {
 pub fn build_client(timeout_ms: Option<u64>) -> reqwest::Client {
     let builder = reqwest::Client::builder();
     #[cfg(not(target_arch = "wasm32"))]
-    let builder = builder.timeout(std::time::Duration::from_millis(timeout_ms.unwrap_or(60_000)));
+    let builder = builder.timeout(std::time::Duration::from_millis(
+        timeout_ms.unwrap_or(60_000),
+    ));
     let _ = timeout_ms; // suppress unused warning on wasm
     builder.build().expect("Failed to build HTTP client")
 }

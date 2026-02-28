@@ -32,18 +32,14 @@ async fn test_workflow_sequential_two_steps() {
 
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(mock_openai_response("Step A done")),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(mock_openai_response("Step A done")))
         .up_to_n_times(1)
         .mount(&mock_server)
         .await;
 
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(mock_openai_response("Step B done")),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(mock_openai_response("Step B done")))
         .mount(&mock_server)
         .await;
 
@@ -57,9 +53,7 @@ async fn test_workflow_sequential_two_steps() {
         .build();
 
     let workflow = Workflow::builder()
-        .agent_step("step_a", agent_a, |_outputs| {
-            vec![Message::user("start")]
-        })
+        .agent_step("step_a", agent_a, |_outputs| vec![Message::user("start")])
         .agent_step("step_b", agent_b, |outputs| {
             let prev = outputs
                 .get("step_a")
@@ -105,14 +99,8 @@ async fn test_workflow_dag_three_steps() {
         .agent_step("step_a", agent_a, |_| vec![Message::user("a")])
         .agent_step("step_b", agent_b, |_| vec![Message::user("b")])
         .agent_step("step_c", agent_c, |outputs| {
-            let a_text = outputs
-                .get("step_a")
-                .map(|o| o.text.as_str())
-                .unwrap_or("");
-            let b_text = outputs
-                .get("step_b")
-                .map(|o| o.text.as_str())
-                .unwrap_or("");
+            let a_text = outputs.get("step_a").map(|o| o.text.as_str()).unwrap_or("");
+            let b_text = outputs.get("step_b").map(|o| o.text.as_str()).unwrap_or("");
             vec![Message::user(format!("merge: {a_text} + {b_text}"))]
         })
         .dependency("step_c", "step_a")
@@ -133,9 +121,7 @@ async fn test_workflow_deadlock_detection() {
 
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(mock_openai_response("unreachable")),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(mock_openai_response("unreachable")))
         .mount(&mock_server)
         .await;
 

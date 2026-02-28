@@ -330,9 +330,7 @@ impl Provider for AnthropicProvider {
         messages: &[Message],
         tools: &[Tool],
         options: &GenerateOptions,
-    ) -> crate::error::Result<
-        crate::provider::BoxStream,
-    > {
+    ) -> crate::error::Result<crate::provider::BoxStream> {
         let url = format!("{}/messages", self.base_url());
         let (system, mut body) = self.build_request_body(messages, tools, options);
 
