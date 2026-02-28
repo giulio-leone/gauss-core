@@ -112,6 +112,7 @@ impl AgentMetrics {
 // ---------------------------------------------------------------------------
 
 /// Builder for creating timed spans.
+#[derive(Debug)]
 pub struct SpanBuilder {
     name: String,
     span_type: SpanType,

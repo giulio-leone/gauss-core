@@ -231,6 +231,14 @@ impl Default for MiddlewareChain {
     }
 }
 
+impl std::fmt::Debug for MiddlewareChain {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MiddlewareChain")
+            .field("count", &self.middlewares.len())
+            .finish()
+    }
+}
+
 impl MiddlewareChain {
     pub fn new() -> Self {
         Self {
@@ -354,6 +362,7 @@ impl MiddlewareChain {
 // ---------------------------------------------------------------------------
 
 /// Simple logging middleware using the `tracing` crate.
+#[derive(Debug)]
 pub struct LoggingMiddleware;
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -428,11 +437,13 @@ impl Middleware for LoggingMiddleware {
 // ---------------------------------------------------------------------------
 
 /// LLM response caching middleware with TTL.
+#[derive(Debug)]
 pub struct CachingMiddleware {
     cache: std::sync::Mutex<HashMap<String, CacheEntry>>,
     ttl_ms: u64,
 }
 
+#[derive(Debug)]
 struct CacheEntry {
     value: String,
     expires_at: u64,

@@ -704,3 +704,122 @@ pub async fn serve<T: McpTransport>(server: &McpServer, transport: &T) -> error:
     }
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// HTTP/SSE Transport (native only)
+// ---------------------------------------------------------------------------
+
+/// HTTP-based MCP transport. Sends JSON-RPC as POST, receives responses.
+/// Also supports Server-Sent Events (SSE) for streaming server notifications.
+#[cfg(all(feature = "native", not(target_arch = "wasm32")))]
+pub struct HttpTransport {
+    client: reqwest::Client,
+    endpoint: String,
+    pending: tokio::sync::Mutex<Vec<JsonRpcMessage>>,
+}
+
+#[cfg(all(feature = "native", not(target_arch = "wasm32")))]
+impl HttpTransport {
+    /// Create a new HTTP transport pointing at the MCP server endpoint.
+    pub fn new(endpoint: impl Into<String>) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            endpoint: endpoint.into(),
+            pending: tokio::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Create with custom reqwest client (for auth headers, timeouts, etc.).
+    pub fn with_client(client: reqwest::Client, endpoint: impl Into<String>) -> Self {
+        Self {
+            client,
+            endpoint: endpoint.into(),
+            pending: tokio::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Connect to an SSE endpoint and collect events into pending messages.
+    pub async fn connect_sse(&self, sse_url: &str) -> error::Result<()> {
+        let resp = self
+            .client
+            .get(sse_url)
+            .header("Accept", "text/event-stream")
+            .send()
+            .await
+            .map_err(|e| error::GaussError::tool("mcp", format!("SSE connect error: {e}")))?;
+
+        if !resp.status().is_success() {
+            return Err(error::GaussError::tool(
+                "mcp",
+                format!("SSE HTTP {}", resp.status()),
+            ));
+        }
+
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| error::GaussError::tool("mcp", format!("SSE read error: {e}")))?;
+
+        // Parse SSE events (data: lines)
+        let mut pending = self.pending.lock().await;
+        for line in text.lines() {
+            if let Some(data) = line.strip_prefix("data: ") {
+                if let Ok(msg) = serde_json::from_str::<JsonRpcMessage>(data) {
+                    pending.push(msg);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(all(feature = "native", not(target_arch = "wasm32")))]
+#[async_trait]
+impl McpTransport for HttpTransport {
+    async fn send(&self, message: &JsonRpcMessage) -> error::Result<()> {
+        let resp = self
+            .client
+            .post(&self.endpoint)
+            .header("Content-Type", "application/json")
+            .json(message)
+            .send()
+            .await
+            .map_err(|e| error::GaussError::tool("mcp", format!("HTTP send error: {e}")))?;
+
+        if !resp.status().is_success() {
+            return Err(error::GaussError::tool(
+                "mcp",
+                format!("HTTP error: {}", resp.status()),
+            ));
+        }
+
+        // If the response body contains a JSON-RPC response, queue it
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| error::GaussError::tool("mcp", format!("HTTP read error: {e}")))?;
+
+        if !body.trim().is_empty() {
+            if let Ok(msg) = serde_json::from_str::<JsonRpcMessage>(&body) {
+                self.pending.lock().await.push(msg);
+            }
+        }
+        Ok(())
+    }
+
+    async fn receive(&self) -> error::Result<JsonRpcMessage> {
+        // Return from pending queue
+        let mut pending = self.pending.lock().await;
+        if pending.is_empty() {
+            return Err(error::GaussError::tool(
+                "mcp",
+                "No pending messages (call send first or connect_sse)",
+            ));
+        }
+        Ok(pending.remove(0))
+    }
+
+    async fn close(&self) -> error::Result<()> {
+        Ok(())
+    }
+}
