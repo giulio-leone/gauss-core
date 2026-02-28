@@ -93,3 +93,119 @@ async fn test_mcp_server_unknown_method() {
     assert!(response.error.is_some());
     assert_eq!(response.error.unwrap().code, -32601);
 }
+
+#[tokio::test]
+async fn test_mcp_server_initialize() {
+    let mut server = McpServer::new("gauss-mcp", "0.1.0");
+    server.add_tool(Tool::builder("echo", "Echo input").build());
+
+    let request = JsonRpcMessage::request(1, "initialize", serde_json::json!({}));
+    let response = server.handle_message(request).await.unwrap();
+
+    let result = response.result.unwrap();
+    assert_eq!(result["serverInfo"]["name"], "gauss-mcp");
+    assert_eq!(result["protocolVersion"], "2024-11-05");
+    assert!(result["capabilities"]["tools"].is_object());
+}
+
+#[tokio::test]
+async fn test_mcp_server_tools_call_unknown() {
+    let server = McpServer::new("test", "1.0");
+    let request = JsonRpcMessage::request(
+        1,
+        "tools/call",
+        serde_json::json!({"name": "nonexistent", "arguments": {}}),
+    );
+    let response = server.handle_message(request).await.unwrap();
+    assert!(response.error.is_some());
+    assert_eq!(response.error.unwrap().code, -32602);
+}
+
+#[tokio::test]
+async fn test_mcp_server_capabilities() {
+    let server = McpServer::new("test", "1.0");
+    let caps = server.capabilities();
+    assert!(caps.tools.is_some());
+    assert!(caps.resources.is_none());
+
+    let mut server2 = McpServer::new("test", "1.0");
+    server2.add_resource(McpResource {
+        uri: "file://test.txt".into(),
+        name: "test".into(),
+        description: None,
+        mime_type: None,
+    });
+    let caps2 = server2.capabilities();
+    assert!(caps2.resources.is_some());
+}
+
+#[tokio::test]
+async fn test_transport_client_with_server() {
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    /// In-memory transport for testing: two channels forming a bidirectional pipe.
+    struct ChannelTransport {
+        tx: tokio::sync::mpsc::Sender<JsonRpcMessage>,
+        rx: Arc<Mutex<tokio::sync::mpsc::Receiver<JsonRpcMessage>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl McpTransport for ChannelTransport {
+        async fn send(&self, message: &JsonRpcMessage) -> gauss_core::error::Result<()> {
+            self.tx
+                .send(message.clone())
+                .await
+                .map_err(|e| gauss_core::error::GaussError::tool("mcp", format!("{e}")))?;
+            Ok(())
+        }
+        async fn receive(&self) -> gauss_core::error::Result<JsonRpcMessage> {
+            self.rx
+                .lock()
+                .await
+                .recv()
+                .await
+                .ok_or_else(|| gauss_core::error::GaussError::tool("mcp", "Channel closed"))
+        }
+        async fn close(&self) -> gauss_core::error::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn channel_pair() -> (ChannelTransport, ChannelTransport) {
+        let (tx1, rx1) = tokio::sync::mpsc::channel(32);
+        let (tx2, rx2) = tokio::sync::mpsc::channel(32);
+        (
+            ChannelTransport {
+                tx: tx1,
+                rx: Arc::new(Mutex::new(rx2)),
+            },
+            ChannelTransport {
+                tx: tx2,
+                rx: Arc::new(Mutex::new(rx1)),
+            },
+        )
+    }
+
+    // Create server with a tool
+    let mut server = McpServer::new("test-server", "1.0.0");
+    server.add_tool(Tool::builder("ping", "Returns pong").build());
+
+    // Create transport pair
+    let (client_transport, server_transport) = channel_pair();
+
+    // Spawn server in background (process one request then stop)
+    let server_handle = tokio::spawn(async move {
+        let msg = server_transport.receive().await.unwrap();
+        let resp = server.handle_message(msg).await.unwrap();
+        server_transport.send(&resp).await.unwrap();
+    });
+
+    // Client calls list_tools
+    let mut client = TransportMcpClient::new(client_transport);
+    let tools = client.list_tools().await.unwrap();
+    assert_eq!(tools.len(), 1);
+    assert_eq!(tools[0].name, "ping");
+
+    server_handle.await.unwrap();
+}

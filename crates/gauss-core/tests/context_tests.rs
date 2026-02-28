@@ -78,3 +78,36 @@ fn test_context_tracker_usage() {
     assert_eq!(tracker.current_tokens, 0);
     assert!(tracker.available_tokens() > 0);
 }
+
+#[test]
+fn test_count_tokens_precise() {
+    // tiktoken-rs should give more accurate results than the 4-char approx
+    let text = "Hello, world!";
+    let precise = count_tokens(text);
+    let approx = count_tokens_approx(text);
+    // Both should return a reasonable number (> 0)
+    assert!(precise > 0);
+    assert!(approx > 0);
+    // On native with tiktoken, precise should differ from char/4 heuristic
+    // "Hello, world!" = 4 tokens in cl100k_base, approx = ceil(13/4)=4
+    // Both happen to be 4 for this string, but the mechanism differs
+}
+
+#[test]
+fn test_count_tokens_for_model() {
+    let text = "The quick brown fox jumps over the lazy dog.";
+    let tokens = count_tokens_for_model(text, "gpt-4o");
+    assert!(tokens > 0);
+    // For an unknown model, should fall back gracefully
+    let tokens2 = count_tokens_for_model(text, "some-unknown-model-xyz");
+    assert!(tokens2 > 0);
+}
+
+#[test]
+fn test_tiktoken_consistency() {
+    // Ensure count_tokens returns consistent results
+    let text = "Rust is a systems programming language.";
+    let t1 = count_tokens(text);
+    let t2 = count_tokens(text);
+    assert_eq!(t1, t2);
+}

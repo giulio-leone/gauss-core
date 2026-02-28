@@ -1,13 +1,14 @@
 //! Context management — token counting, message pruning, summarization.
 //!
 //! Tracks context window usage and provides strategies for keeping
-//! messages within model limits.
+//! messages within model limits. Uses tiktoken-rs for precise counting
+//! on native targets, falls back to approximation on WASM.
 
 use crate::message::Message;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
-// Token Counter Trait
+// Token Counter
 // ---------------------------------------------------------------------------
 
 /// Model context window sizes (approximate).
@@ -28,9 +29,40 @@ pub fn context_window_size(model: &str) -> usize {
 
 /// Approximate token counter (4 chars ≈ 1 token).
 pub fn count_tokens_approx(text: &str) -> usize {
-    // Simple approximation: ~4 characters per token for English.
-    // For production, use tiktoken-rs.
     text.len().div_ceil(4)
+}
+
+/// Precise token counter using tiktoken (native only, cl100k_base encoding).
+/// Falls back to approximation if tiktoken is unavailable.
+#[cfg(all(feature = "native", not(target_arch = "wasm32")))]
+pub fn count_tokens(text: &str) -> usize {
+    use std::sync::OnceLock;
+    static BPE: OnceLock<Option<tiktoken_rs::CoreBPE>> = OnceLock::new();
+    let bpe = BPE.get_or_init(|| tiktoken_rs::cl100k_base().ok());
+    match bpe {
+        Some(enc) => enc.encode_ordinary(text).len(),
+        None => count_tokens_approx(text),
+    }
+}
+
+/// On WASM, fall back to approximation.
+#[cfg(any(not(feature = "native"), target_arch = "wasm32"))]
+pub fn count_tokens(text: &str) -> usize {
+    count_tokens_approx(text)
+}
+
+/// Count tokens for a specific model's encoding (native only).
+/// Supports cl100k_base (GPT-4/3.5), o200k_base (GPT-4o), etc.
+#[cfg(all(feature = "native", not(target_arch = "wasm32")))]
+pub fn count_tokens_for_model(text: &str, model: &str) -> usize {
+    tiktoken_rs::get_bpe_from_model(model)
+        .map(|enc| enc.encode_ordinary(text).len())
+        .unwrap_or_else(|_| count_tokens(text))
+}
+
+#[cfg(any(not(feature = "native"), target_arch = "wasm32"))]
+pub fn count_tokens_for_model(text: &str, _model: &str) -> usize {
+    count_tokens_approx(text)
 }
 
 /// Count tokens in a message (includes role overhead).
