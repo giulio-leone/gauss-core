@@ -1183,6 +1183,83 @@ fn destroy_plugin_registry(handle: u32) -> PyResult<()> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Tool Validator (patterns module)
+// ---------------------------------------------------------------------------
+
+use gauss_core::patterns::{CoercionStrategy, ToolValidator as RustToolValidator};
+
+fn tool_validators() -> &'static Mutex<HashMap<u32, RustToolValidator>> {
+    static REG: OnceLock<Mutex<HashMap<u32, RustToolValidator>>> = OnceLock::new();
+    REG.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[pyfunction]
+#[pyo3(signature = (strategies=None))]
+fn create_tool_validator(strategies: Option<Vec<String>>) -> u32 {
+    let validator = match strategies {
+        Some(strats) => {
+            let parsed: Vec<CoercionStrategy> = strats
+                .iter()
+                .filter_map(|s| match s.as_str() {
+                    "null_to_default" => Some(CoercionStrategy::NullToDefault),
+                    "type_cast" => Some(CoercionStrategy::TypeCast),
+                    "json_parse" => Some(CoercionStrategy::JsonParse),
+                    "strip_null" => Some(CoercionStrategy::StripNull),
+                    _ => None,
+                })
+                .collect();
+            RustToolValidator::with_strategies(parsed)
+        }
+        None => RustToolValidator::new(),
+    };
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    tool_validators().lock().unwrap().insert(id, validator);
+    id
+}
+
+#[pyfunction]
+fn tool_validator_validate(handle: u32, input: String, schema: String) -> PyResult<String> {
+    let reg = tool_validators().lock().unwrap();
+    let validator = reg
+        .get(&handle)
+        .ok_or_else(|| py_err("ToolValidator not found"))?;
+    let input_val: serde_json::Value =
+        serde_json::from_str(&input).map_err(|e| py_err(&format!("{e}")))?;
+    let schema_val: serde_json::Value =
+        serde_json::from_str(&schema).map_err(|e| py_err(&format!("{e}")))?;
+    let result = validator
+        .validate(input_val, &schema_val)
+        .map_err(|e| py_err(&format!("{e}")))?;
+    serde_json::to_string(&result).map_err(|e| py_err(&format!("{e}")))
+}
+
+#[pyfunction]
+fn destroy_tool_validator(handle: u32) -> PyResult<()> {
+    tool_validators()
+        .lock()
+        .unwrap()
+        .remove(&handle)
+        .ok_or_else(|| py_err("ToolValidator not found"))?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Agent Config (config module)
+// ---------------------------------------------------------------------------
+
+#[pyfunction]
+fn agent_config_from_json(json_str: String) -> PyResult<String> {
+    let config = gauss_core::config::AgentConfig::from_json(&json_str)
+        .map_err(|e| py_err(&format!("{e}")))?;
+    config.to_json().map_err(|e| py_err(&format!("{e}")))
+}
+
+#[pyfunction]
+fn agent_config_resolve_env(value: String) -> String {
+    gauss_core::config::resolve_env(&value)
+}
+
 /// Gauss Core Python module.
 #[pymodule]
 #[pyo3(name = "gauss_core")]
@@ -1268,5 +1345,12 @@ fn gauss_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(plugin_registry_list, m)?)?;
     m.add_function(wrap_pyfunction!(plugin_registry_emit, m)?)?;
     m.add_function(wrap_pyfunction!(destroy_plugin_registry, m)?)?;
+    // Patterns
+    m.add_function(wrap_pyfunction!(create_tool_validator, m)?)?;
+    m.add_function(wrap_pyfunction!(tool_validator_validate, m)?)?;
+    m.add_function(wrap_pyfunction!(destroy_tool_validator, m)?)?;
+    // Config
+    m.add_function(wrap_pyfunction!(agent_config_from_json, m)?)?;
+    m.add_function(wrap_pyfunction!(agent_config_resolve_env, m)?)?;
     Ok(())
 }

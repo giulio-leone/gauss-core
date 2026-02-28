@@ -703,3 +703,82 @@ pub fn destroy_plugin_registry(handle: u32) -> Result<(), JsValue> {
         .ok_or_else(|| err("PluginRegistry not found"))?;
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Tool Validator (patterns module)
+// ---------------------------------------------------------------------------
+
+use gauss_core::patterns::{CoercionStrategy, ToolValidator as RustToolValidator};
+
+thread_local! {
+    static TOOL_VALIDATORS: RefCell<HashMap<u32, RustToolValidator>> = RefCell::new(HashMap::new());
+}
+
+#[wasm_bindgen(js_name = "createToolValidator")]
+pub fn create_tool_validator(strategies: Option<Vec<String>>) -> u32 {
+    let validator = match strategies {
+        Some(strats) => {
+            let parsed: Vec<CoercionStrategy> = strats
+                .iter()
+                .filter_map(|s| match s.as_str() {
+                    "null_to_default" => Some(CoercionStrategy::NullToDefault),
+                    "type_cast" => Some(CoercionStrategy::TypeCast),
+                    "json_parse" => Some(CoercionStrategy::JsonParse),
+                    "strip_null" => Some(CoercionStrategy::StripNull),
+                    _ => None,
+                })
+                .collect();
+            RustToolValidator::with_strategies(parsed)
+        }
+        None => RustToolValidator::new(),
+    };
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    TOOL_VALIDATORS.with(|r| r.borrow_mut().insert(id, validator));
+    id
+}
+
+#[wasm_bindgen(js_name = "toolValidatorValidate")]
+pub fn tool_validator_validate(
+    handle: u32,
+    input: String,
+    schema: String,
+) -> Result<String, JsValue> {
+    let input_val: serde_json::Value =
+        serde_json::from_str(&input).map_err(|e| err(&format!("{e}")))?;
+    let schema_val: serde_json::Value =
+        serde_json::from_str(&schema).map_err(|e| err(&format!("{e}")))?;
+    TOOL_VALIDATORS.with(|r| {
+        let reg = r.borrow();
+        let validator = reg
+            .get(&handle)
+            .ok_or_else(|| err("ToolValidator not found"))?;
+        let result = validator
+            .validate(input_val, &schema_val)
+            .map_err(|e| err(&format!("{e}")))?;
+        serde_json::to_string(&result).map_err(|e| err(&format!("{e}")))
+    })
+}
+
+#[wasm_bindgen(js_name = "destroyToolValidator")]
+pub fn destroy_tool_validator(handle: u32) -> Result<(), JsValue> {
+    TOOL_VALIDATORS
+        .with(|r| r.borrow_mut().remove(&handle))
+        .ok_or_else(|| err("ToolValidator not found"))?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Agent Config (config module)
+// ---------------------------------------------------------------------------
+
+#[wasm_bindgen(js_name = "agentConfigFromJson")]
+pub fn agent_config_from_json(json_str: String) -> Result<String, JsValue> {
+    let config =
+        gauss_core::config::AgentConfig::from_json(&json_str).map_err(|e| err(&format!("{e}")))?;
+    config.to_json().map_err(|e| err(&format!("{e}")))
+}
+
+#[wasm_bindgen(js_name = "agentConfigResolveEnv")]
+pub fn agent_config_resolve_env(value: String) -> String {
+    gauss_core::config::resolve_env(&value)
+}

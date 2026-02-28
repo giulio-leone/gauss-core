@@ -1386,3 +1386,82 @@ pub fn destroy_plugin_registry(handle: u32) -> Result<()> {
         .ok_or_else(|| napi::Error::from_reason("PluginRegistry not found"))?;
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Tool Validator (patterns module)
+// ---------------------------------------------------------------------------
+
+use gauss_core::patterns::{CoercionStrategy, ToolValidator as RustToolValidator};
+use std::sync::OnceLock;
+
+fn tool_validator_reg() -> &'static Mutex<HashMap<u32, RustToolValidator>> {
+    static REG: OnceLock<Mutex<HashMap<u32, RustToolValidator>>> = OnceLock::new();
+    REG.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[napi]
+pub fn create_tool_validator(strategies: Option<Vec<String>>) -> u32 {
+    let validator = match strategies {
+        Some(strats) => {
+            let parsed: Vec<CoercionStrategy> = strats
+                .iter()
+                .filter_map(|s| match s.as_str() {
+                    "null_to_default" => Some(CoercionStrategy::NullToDefault),
+                    "type_cast" => Some(CoercionStrategy::TypeCast),
+                    "json_parse" => Some(CoercionStrategy::JsonParse),
+                    "strip_null" => Some(CoercionStrategy::StripNull),
+                    _ => None,
+                })
+                .collect();
+            RustToolValidator::with_strategies(parsed)
+        }
+        None => RustToolValidator::new(),
+    };
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    tool_validator_reg().lock().unwrap().insert(id, validator);
+    id
+}
+
+#[napi]
+pub fn tool_validator_validate(handle: u32, input: String, schema: String) -> Result<String> {
+    let reg = tool_validator_reg().lock().unwrap();
+    let validator = reg
+        .get(&handle)
+        .ok_or_else(|| napi::Error::from_reason("ToolValidator not found"))?;
+    let input_val: serde_json::Value =
+        serde_json::from_str(&input).map_err(|e| napi::Error::from_reason(format!("{e}")))?;
+    let schema_val: serde_json::Value =
+        serde_json::from_str(&schema).map_err(|e| napi::Error::from_reason(format!("{e}")))?;
+    let result = validator
+        .validate(input_val, &schema_val)
+        .map_err(|e| napi::Error::from_reason(format!("{e}")))?;
+    serde_json::to_string(&result).map_err(|e| napi::Error::from_reason(format!("{e}")))
+}
+
+#[napi]
+pub fn destroy_tool_validator(handle: u32) -> Result<()> {
+    tool_validator_reg()
+        .lock()
+        .unwrap()
+        .remove(&handle)
+        .ok_or_else(|| napi::Error::from_reason("ToolValidator not found"))?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Agent Config (config module)
+// ---------------------------------------------------------------------------
+
+#[napi]
+pub fn agent_config_from_json(json_str: String) -> Result<String> {
+    let config = gauss_core::config::AgentConfig::from_json(&json_str)
+        .map_err(|e| napi::Error::from_reason(format!("{e}")))?;
+    config
+        .to_json()
+        .map_err(|e| napi::Error::from_reason(format!("{e}")))
+}
+
+#[napi]
+pub fn agent_config_resolve_env(value: String) -> String {
+    gauss_core::config::resolve_env(&value)
+}

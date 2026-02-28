@@ -14,6 +14,8 @@ readme = "../../README.md"
 default = ["native"]
 native = ["dep:tokio", "dep:tokio-stream", "dep:tiktoken-rs"]
 wasm = ["dep:gloo-timers"]
+config-yaml = ["dep:serde_yaml"]
+config-toml = ["dep:toml"]
 
 [dependencies]
 serde = { workspace = true }
@@ -36,8 +38,16 @@ secrecy = { version = "0.10", features = ["serde"] }
 url = "2"
 gloo-timers = { version = "0.3", features = ["futures"], optional = true }
 tiktoken-rs = { version = "0.9", optional = true }
+serde_yaml = { version = "0.9", optional = true }
+toml = { version = "0.8", optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }
 wiremock = "0.6"
 pretty_assertions = "1"
+criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1"
+
+[[bench]]
+name = "core_benchmarks"
+harness = false

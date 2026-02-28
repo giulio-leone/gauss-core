@@ -6,6 +6,7 @@
 //! RAG, MCP, middleware, observability, and multi-agent networks.
 
 pub mod agent;
+pub mod config;
 pub mod context;
 pub mod error;
 pub mod eval;
@@ -16,6 +17,7 @@ pub mod memory;
 pub mod message;
 pub mod middleware;
 pub mod network;
+pub mod patterns;
 pub mod plugin;
 pub mod provider;
 pub mod rag;
