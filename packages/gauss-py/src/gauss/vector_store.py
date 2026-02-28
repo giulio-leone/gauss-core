@@ -1,11 +1,12 @@
 """
 VectorStore — In-memory vector storage and similarity search via Rust.
+Rust signature: vector_store_upsert(handle, chunks_json), vector_store_search(handle, embedding_json, top_k)
 """
 
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Optional
 
 
 class VectorStore:
@@ -14,8 +15,8 @@ class VectorStore:
 
     Example:
         >>> store = VectorStore()
-        >>> store.upsert("doc1", [0.1, 0.2, 0.3], {"text": "Hello"})
-        >>> results = store.search([0.1, 0.2, 0.3], top_k=5)
+        >>> await store.upsert([{"id": "doc1", "embedding": [0.1, 0.2], "metadata": {"text": "Hello"}}])
+        >>> results = await store.search([0.1, 0.2], top_k=5)
     """
 
     def __init__(self) -> None:
@@ -23,20 +24,19 @@ class VectorStore:
 
         self._handle = create_vector_store()
 
-    def upsert(self, id: str, embedding: list[float], metadata: dict[str, Any] | None = None) -> None:
-        """Insert or update a vector."""
+    async def upsert(self, chunks: list[dict[str, Any]]) -> None:
+        """Insert or update vectors. Each chunk: {id, embedding, metadata}."""
         from gauss._native import vector_store_upsert
 
-        embedding_json = json.dumps(embedding)
-        meta_json = json.dumps(metadata) if metadata else "{}"
-        vector_store_upsert(self._handle, id, embedding_json, meta_json)
+        await vector_store_upsert(self._handle, json.dumps(chunks))
 
-    def search(self, query: list[float], top_k: int = 10) -> list[dict[str, Any]]:
+    async def search(self, query_embedding: list[float], top_k: int = 10) -> list[dict[str, Any]]:
         """Search for similar vectors."""
         from gauss._native import vector_store_search
 
-        query_json = json.dumps(query)
-        result_json = vector_store_search(self._handle, query_json, top_k)
+        result_json = await vector_store_search(
+            self._handle, json.dumps(query_embedding), top_k
+        )
         return json.loads(result_json) if result_json else []
 
     def destroy(self) -> None:
@@ -50,3 +50,10 @@ class VectorStore:
             self.destroy()
         except Exception:
             pass
+
+
+def cosine_similarity(a: list[float], b: list[float]) -> float:
+    """Compute cosine similarity between two vectors using Rust."""
+    from gauss._native import cosine_similarity as _cosine_similarity
+
+    return _cosine_similarity(json.dumps(a), json.dumps(b))

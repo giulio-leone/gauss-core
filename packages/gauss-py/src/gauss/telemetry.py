@@ -1,5 +1,6 @@
 """
 Telemetry — Span tracking and metrics collection via Rust.
+Rust returns JSON strings, not native dicts.
 """
 
 from __future__ import annotations
@@ -34,14 +35,14 @@ class Telemetry:
         from gauss._native import telemetry_export_spans
 
         result = telemetry_export_spans(self._handle)
-        return result if isinstance(result, list) else []
+        return json.loads(result) if isinstance(result, str) else (result or [])
 
     def export_metrics(self) -> dict[str, Any]:
         """Export aggregated metrics."""
         from gauss._native import telemetry_export_metrics
 
         result = telemetry_export_metrics(self._handle)
-        return result if isinstance(result, dict) else {}
+        return json.loads(result) if isinstance(result, str) else (result or {})
 
     def clear(self) -> None:
         """Clear all telemetry data."""

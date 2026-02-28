@@ -65,7 +65,6 @@ class TestAgentConfig:
         from gauss.agent import Agent
         from gauss.provider import Provider
 
-        # Create a fake provider (no NAPI needed)
         provider = Provider(handle=1, provider_type="openai", model="gpt-4o")
 
         @tool(description="Test tool")
@@ -78,11 +77,15 @@ class TestAgentConfig:
             tools=[my_tool],
             max_steps=5,
             name="test-agent",
+            temperature=0.7,
+            max_tokens=1024,
         )
 
         assert agent.name == "test-agent"
         assert agent.instructions == "You are helpful"
         assert agent.max_steps == 5
+        assert agent.temperature == 0.7
+        assert agent.max_tokens == 1024
         assert len(agent._tools) == 1
         assert agent._tools[0].name == "my_tool"
 
@@ -93,7 +96,7 @@ class TestAgentConfig:
         provider = Provider(handle=1, provider_type="openai", model="gpt-4o")
 
         try:
-            Agent(model=provider, tools=["not a tool"])  # type: ignore
+            Agent(model=provider, tools=["not a tool"])
             assert False, "Should have raised TypeError"
         except TypeError:
             pass
@@ -104,10 +107,74 @@ class TestMiddlewareConfig:
         from gauss.middleware import MiddlewareConfig
 
         config = MiddlewareConfig(
-            logging=True,
-            caching={"ttl_ms": 60_000},
-            telemetry=True,
+            guardrail_handle=42,
+            telemetry_handle=43,
         )
-        assert config.logging is True
-        assert config.caching == {"ttl_ms": 60_000}
-        assert config.telemetry is True
+        assert config.guardrail_handle == 42
+        assert config.telemetry_handle == 43
+
+
+class TestGuardrailChainSignatures:
+    """Verify guardrail methods accept the correct Rust-aligned signatures."""
+
+    def test_guardrail_chain_init(self):
+        from gauss.guardrail import GuardrailChain
+
+        # Just verify the class exists and has the right methods
+        assert hasattr(GuardrailChain, "add_content_moderation")
+        assert hasattr(GuardrailChain, "add_pii_detection")
+        assert hasattr(GuardrailChain, "add_token_limit")
+        assert hasattr(GuardrailChain, "add_regex_filter")
+        assert hasattr(GuardrailChain, "add_schema")
+        assert hasattr(GuardrailChain, "list")
+
+
+class TestResilienceAPI:
+    def test_exports_exist(self):
+        from gauss.resilience import create_fallback, create_circuit_breaker, create_resilient
+
+        assert callable(create_fallback)
+        assert callable(create_circuit_breaker)
+        assert callable(create_resilient)
+
+
+class TestPluginAPI:
+    def test_class_exists(self):
+        from gauss.plugin import PluginRegistry
+
+        assert hasattr(PluginRegistry, "add_telemetry")
+        assert hasattr(PluginRegistry, "add_memory")
+        assert hasattr(PluginRegistry, "list")
+        assert hasattr(PluginRegistry, "emit")
+
+
+class TestContextAPI:
+    def test_exports_exist(self):
+        from gauss.context import count_tokens, count_tokens_for_model, count_message_tokens, get_context_window_size
+
+        assert callable(count_tokens)
+        assert callable(count_tokens_for_model)
+        assert callable(count_message_tokens)
+        assert callable(get_context_window_size)
+
+
+class TestAllExports:
+    def test_all_exports_importable(self):
+        import gauss
+
+        expected = [
+            "Agent", "AgentResult", "StreamChunk", "gauss", "Provider",
+            "tool", "ToolDef", "middleware", "MiddlewareConfig",
+            "Memory", "VectorStore", "cosine_similarity",
+            "GuardrailChain", "Telemetry",
+            "create_fallback", "create_circuit_breaker", "create_resilient",
+            "PluginRegistry", "config_from_json", "resolve_env",
+            "ToolValidator", "Network", "McpServer",
+            "EvalRunner", "load_dataset_jsonl", "load_dataset_json",
+            "ApprovalManager", "CheckpointStore",
+            "count_tokens", "count_tokens_for_model", "count_message_tokens",
+            "get_context_window_size", "parse_partial_json",
+        ]
+
+        for name in expected:
+            assert hasattr(gauss, name), f"Missing export: {name}"
