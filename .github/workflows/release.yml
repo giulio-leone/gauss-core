@@ -1,0 +1,54 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build CLI (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            binary: gauss
+            artifact: gauss-cli-linux-x86_64
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            binary: gauss
+            artifact: gauss-cli-macos-arm64
+          - target: x86_64-apple-darwin
+            os: macos-13
+            binary: gauss
+            artifact: gauss-cli-macos-x86_64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p gauss-cli --target ${{ matrix.target }}
+      - run: cp target/${{ matrix.target }}/release/${{ matrix.binary }} ${{ matrix.artifact }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
+  release:
+    name: Publish Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - run: chmod +x gauss-cli-*
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: gauss-cli-*
+          generate_release_notes: true
