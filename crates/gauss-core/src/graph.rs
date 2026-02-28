@@ -35,26 +35,39 @@ pub enum ConsensusStrategy {
     Custom(String),
 }
 
+// Type aliases for complex callback types used in GraphNode.
+#[cfg(not(target_arch = "wasm32"))]
+type InputMapFn =
+    std::sync::Arc<dyn Fn(&HashMap<String, NodeOutput>) -> Vec<Message> + Send + Sync>;
+#[cfg(not(target_arch = "wasm32"))]
+type AsyncExecuteFn = std::sync::Arc<
+    dyn Fn(
+            HashMap<String, NodeOutput>,
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = error::Result<NodeOutput>> + Send>>
+        + Send
+        + Sync,
+>;
+
+#[cfg(target_arch = "wasm32")]
+type InputMapFn = std::rc::Rc<dyn Fn(&HashMap<String, NodeOutput>) -> Vec<Message>>;
+#[cfg(target_arch = "wasm32")]
+type AsyncExecuteFn = std::rc::Rc<
+    dyn Fn(
+        HashMap<String, NodeOutput>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = error::Result<NodeOutput>>>>,
+>;
+
 /// A single node in the graph.
 #[cfg(not(target_arch = "wasm32"))]
 pub enum GraphNode {
     /// An agent node.
     Agent {
         agent: Box<Agent>,
-        input_fn:
-            std::sync::Arc<dyn Fn(&HashMap<String, NodeOutput>) -> Vec<Message> + Send + Sync>,
+        input_fn: InputMapFn,
     },
     /// A custom async function.
-    Function {
-        execute: std::sync::Arc<
-            dyn Fn(
-                    HashMap<String, NodeOutput>,
-                ) -> std::pin::Pin<
-                    Box<dyn std::future::Future<Output = error::Result<NodeOutput>> + Send>,
-                > + Send
-                + Sync,
-        >,
-    },
+    Function { execute: AsyncExecuteFn },
     /// A fork: run multiple agents in parallel.
     Fork {
         agents: Vec<(String, Box<Agent>)>,
@@ -66,16 +79,10 @@ pub enum GraphNode {
 pub enum GraphNode {
     Agent {
         agent: Box<Agent>,
-        input_fn: std::rc::Rc<dyn Fn(&HashMap<String, NodeOutput>) -> Vec<Message>>,
+        input_fn: InputMapFn,
     },
     Function {
-        execute: std::rc::Rc<
-            dyn Fn(
-                HashMap<String, NodeOutput>,
-            ) -> std::pin::Pin<
-                Box<dyn std::future::Future<Output = error::Result<NodeOutput>>>,
-            >,
-        >,
+        execute: AsyncExecuteFn,
     },
     Fork {
         agents: Vec<(String, Box<Agent>)>,
