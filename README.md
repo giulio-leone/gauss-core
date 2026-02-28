@@ -102,7 +102,7 @@ gauss run "What is the meaning of life?"
 
 - **Multi-provider**: OpenAI, Anthropic, Google, Groq, Ollama, DeepSeek with automatic retry
 - **Agent loop**: Tool calling with stop conditions (MaxSteps, HasToolCall, TextGenerated)
-- **Streaming**: SSE-based token streaming with AgentStreamEvent
+- **Streaming**: SSE-based token streaming with AgentStreamEvent + stream transformers
 - **Structured output**: JSON Schema validation via jsonschema
 - **Callbacks**: on_step_finish, on_tool_call hooks
 - **Workflow**: DAG-based multi-step pipelines with dependency tracking
@@ -116,6 +116,10 @@ gauss run "What is the meaning of life?"
 - **Human-in-the-Loop**: Approval gates, checkpoints, suspend/resume
 - **Evaluation**: Scorer trait, built-in scorers, dataset loading, batch runner
 - **Observability**: Span tracing, agent metrics, telemetry collector
+- **Guardrails**: Input/output validation — content moderation, PII detection, token limits, regex filters, schema validation
+- **Resilience**: Fallback provider chains, circuit breaker (3-state), composed retry+fallback+CB
+- **Stream Transforms**: Partial JSON parser, object accumulator, map/filter/tap transformers, pipeline composition
+- **Plugin System**: Plugin lifecycle, event bus (pub/sub), registry with topological dependency sort
 - **CLI**: `gauss init`, `gauss run`, `gauss chat`, project templates
 - **4 targets**: Native (NAPI), Browser (WASM), Python (PyO3), CLI
 
@@ -243,6 +247,92 @@ async def main():
     destroy_provider(provider)
 
 asyncio.run(main())
+```
+
+## Guardrails
+
+```rust
+use gauss_core::guardrail::*;
+
+let mut chain = GuardrailChain::new();
+
+// Content moderation (block harmful patterns)
+chain.add(Arc::new(ContentModerationGuardrail::new()
+    .block_pattern("hack", "No hacking instructions")));
+
+// PII detection (redact emails, phones, SSNs, credit cards)
+chain.add(Arc::new(PiiDetectionGuardrail::new(PiiAction::Redact)));
+
+// Token limits
+chain.add(Arc::new(TokenLimitGuardrail::new().max_input(4096)));
+
+// Validate input
+let messages = vec![Message::user("Hello, my email is test@example.com")];
+let result = chain.validate_input(&messages);
+match result.action {
+    GuardrailAction::Allow => println!("Safe!"),
+    GuardrailAction::Block { reason } => println!("Blocked: {reason}"),
+    GuardrailAction::Rewrite { rewritten, .. } => println!("Rewritten: {rewritten}"),
+    _ => {}
+}
+```
+
+## Resilience
+
+```rust
+use gauss_core::resilience::*;
+
+// Fallback chain: try primary, then fallback providers in order
+let fallback = FallbackProvider::new(vec![primary, backup1, backup2]);
+
+// Circuit breaker: trip after 5 failures, recover after 30s
+let cb = CircuitBreaker::new(provider, CircuitBreakerConfig::default());
+
+// Compose: retry → circuit breaker → fallback
+let resilient = ResilientProviderBuilder::new(primary)
+    .retry(RetryConfig::default())
+    .circuit_breaker(CircuitBreakerConfig::default())
+    .fallback(backup)
+    .build();
+```
+
+## Stream Transforms
+
+```rust
+use gauss_core::stream_transform::*;
+
+// Parse partial JSON from streaming chunks
+let value = parse_partial_json(r#"{"name": "test", "age": 2"#);
+// → Some({"name": "test", "age": 2})
+
+// Object accumulator (deduplicate partial updates)
+let mut acc = ObjectAccumulator::new();
+acc.feed("{");           // → Some({})
+acc.feed(r#""key": 1"#); // → Some({"key": 1})
+
+// Stream pipeline with transformers
+let pipeline = StreamPipeline::new()
+    .add(MapText::new(|s| s.to_uppercase()))
+    .add(FilterEvents::new(|e| !matches!(e, StreamEvent::Done)));
+```
+
+## Plugin System
+
+```rust
+use gauss_core::plugin::*;
+
+let mut registry = PluginRegistry::new();
+registry.register(Arc::new(TelemetryPlugin));   // built-in
+registry.register(Arc::new(MemoryPlugin));       // built-in
+
+// Initialize all plugins (topologically sorted by dependencies)
+registry.init_all().unwrap();
+
+// Emit events
+registry.emit(&GaussEvent::AgentStart {
+    agent_id: "agent-1".into(),
+    model: "gpt-4o".into(),
+});
 ```
 
 ## Building

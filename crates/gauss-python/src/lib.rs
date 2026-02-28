@@ -1,11 +1,13 @@
 use gauss_core::agent::{Agent as RustAgent, StopCondition};
 use gauss_core::context;
 use gauss_core::eval;
+use gauss_core::guardrail;
 use gauss_core::hitl;
 use gauss_core::mcp;
 use gauss_core::memory;
 use gauss_core::message::Message as RustMessage;
 use gauss_core::network;
+use gauss_core::plugin;
 use gauss_core::provider::anthropic::AnthropicProvider;
 use gauss_core::provider::deepseek::DeepSeekProvider;
 use gauss_core::provider::google::GoogleProvider;
@@ -15,6 +17,8 @@ use gauss_core::provider::openai::OpenAiProvider;
 use gauss_core::provider::retry::{RetryConfig, RetryProvider};
 use gauss_core::provider::{GenerateOptions, Provider, ProviderConfig};
 use gauss_core::rag;
+use gauss_core::resilience;
+use gauss_core::stream_transform;
 use gauss_core::telemetry;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -892,6 +896,293 @@ fn destroy_telemetry(handle: u32) -> PyResult<()> {
     Ok(())
 }
 
+// ============ Guardrails ============
+
+fn guardrail_chains() -> &'static Mutex<HashMap<u32, guardrail::GuardrailChain>> {
+    use std::sync::OnceLock;
+    static REG: OnceLock<Mutex<HashMap<u32, guardrail::GuardrailChain>>> = OnceLock::new();
+    REG.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[pyfunction]
+fn create_guardrail_chain() -> u32 {
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    guardrail_chains()
+        .lock()
+        .unwrap()
+        .insert(id, guardrail::GuardrailChain::new());
+    id
+}
+
+#[pyfunction]
+fn guardrail_chain_add_content_moderation(
+    handle: u32,
+    block_patterns: Vec<String>,
+    warn_patterns: Vec<String>,
+) -> PyResult<()> {
+    let mut reg = guardrail_chains().lock().unwrap();
+    let chain = reg
+        .get_mut(&handle)
+        .ok_or_else(|| py_err("GuardrailChain not found"))?;
+    let mut g = guardrail::ContentModerationGuardrail::new();
+    for p in block_patterns {
+        g = g.block_pattern(&p, format!("Blocked: {p}"));
+    }
+    for p in warn_patterns {
+        g = g.warn_pattern(&p, format!("Warning: {p}"));
+    }
+    chain.add(Arc::new(g));
+    Ok(())
+}
+
+#[pyfunction]
+fn guardrail_chain_add_pii_detection(handle: u32, action: String) -> PyResult<()> {
+    let pii_action = match action.as_str() {
+        "block" => guardrail::PiiAction::Block,
+        "warn" => guardrail::PiiAction::Warn,
+        "redact" => guardrail::PiiAction::Redact,
+        _ => return Err(py_err("Invalid PII action: block|warn|redact")),
+    };
+    let mut reg = guardrail_chains().lock().unwrap();
+    let chain = reg
+        .get_mut(&handle)
+        .ok_or_else(|| py_err("GuardrailChain not found"))?;
+    chain.add(Arc::new(guardrail::PiiDetectionGuardrail::new(pii_action)));
+    Ok(())
+}
+
+#[pyfunction]
+#[pyo3(signature = (handle, max_input=None, max_output=None))]
+fn guardrail_chain_add_token_limit(
+    handle: u32,
+    max_input: Option<u32>,
+    max_output: Option<u32>,
+) -> PyResult<()> {
+    let mut g = guardrail::TokenLimitGuardrail::new();
+    if let Some(m) = max_input {
+        g = g.max_input(m as usize);
+    }
+    if let Some(m) = max_output {
+        g = g.max_output(m as usize);
+    }
+    let mut reg = guardrail_chains().lock().unwrap();
+    let chain = reg
+        .get_mut(&handle)
+        .ok_or_else(|| py_err("GuardrailChain not found"))?;
+    chain.add(Arc::new(g));
+    Ok(())
+}
+
+#[pyfunction]
+fn guardrail_chain_add_regex_filter(
+    handle: u32,
+    block_rules: Vec<String>,
+    warn_rules: Vec<String>,
+) -> PyResult<()> {
+    let mut g = guardrail::RegexFilterGuardrail::new();
+    for r in block_rules {
+        g = g.block(&r, format!("Blocked by regex: {r}"));
+    }
+    for r in warn_rules {
+        g = g.warn(&r, format!("Warning by regex: {r}"));
+    }
+    let mut reg = guardrail_chains().lock().unwrap();
+    let chain = reg
+        .get_mut(&handle)
+        .ok_or_else(|| py_err("GuardrailChain not found"))?;
+    chain.add(Arc::new(g));
+    Ok(())
+}
+
+#[pyfunction]
+fn guardrail_chain_add_schema(handle: u32, schema_json: String) -> PyResult<()> {
+    let schema: serde_json::Value = serde_json::from_str(&schema_json)
+        .map_err(|e| py_err(&format!("Invalid JSON schema: {e}")))?;
+    let mut reg = guardrail_chains().lock().unwrap();
+    let chain = reg
+        .get_mut(&handle)
+        .ok_or_else(|| py_err("GuardrailChain not found"))?;
+    chain.add(Arc::new(guardrail::SchemaGuardrail::new(schema)));
+    Ok(())
+}
+
+#[pyfunction]
+fn guardrail_chain_list(handle: u32) -> PyResult<Vec<String>> {
+    let reg = guardrail_chains().lock().unwrap();
+    let chain = reg
+        .get(&handle)
+        .ok_or_else(|| py_err("GuardrailChain not found"))?;
+    Ok(chain.list().into_iter().map(String::from).collect())
+}
+
+#[pyfunction]
+fn destroy_guardrail_chain(handle: u32) -> PyResult<()> {
+    guardrail_chains()
+        .lock()
+        .unwrap()
+        .remove(&handle)
+        .ok_or_else(|| py_err("GuardrailChain not found"))?;
+    Ok(())
+}
+
+// ============ Resilience ============
+
+#[pyfunction]
+fn create_fallback_provider(provider_handles: Vec<u32>) -> PyResult<u32> {
+    let prov_reg = providers().lock().unwrap();
+    let mut providers_vec: Vec<Arc<dyn Provider>> = Vec::new();
+    for h in provider_handles {
+        let p = prov_reg
+            .get(&h)
+            .ok_or_else(|| py_err(&format!("Provider {h} not found")))?
+            .clone();
+        providers_vec.push(p);
+    }
+    drop(prov_reg);
+
+    let fallback = Arc::new(resilience::FallbackProvider::new(providers_vec));
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    providers().lock().unwrap().insert(id, fallback);
+    Ok(id)
+}
+
+#[pyfunction]
+#[pyo3(signature = (provider_handle, failure_threshold=None, recovery_timeout_ms=None))]
+fn create_circuit_breaker(
+    provider_handle: u32,
+    failure_threshold: Option<u32>,
+    recovery_timeout_ms: Option<u32>,
+) -> PyResult<u32> {
+    let inner = providers()
+        .lock()
+        .unwrap()
+        .get(&provider_handle)
+        .ok_or_else(|| py_err("Provider not found"))?
+        .clone();
+
+    let config = resilience::CircuitBreakerConfig {
+        failure_threshold: failure_threshold.unwrap_or(5),
+        recovery_timeout_ms: recovery_timeout_ms.map(|v| v as u64).unwrap_or(30_000),
+        success_threshold: 1,
+    };
+
+    let cb = Arc::new(resilience::CircuitBreaker::new(inner, config));
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    providers().lock().unwrap().insert(id, cb);
+    Ok(id)
+}
+
+#[pyfunction]
+#[pyo3(signature = (primary_handle, fallback_handles, enable_circuit_breaker=None))]
+fn create_resilient_provider(
+    primary_handle: u32,
+    fallback_handles: Vec<u32>,
+    enable_circuit_breaker: Option<bool>,
+) -> PyResult<u32> {
+    let prov_reg = providers().lock().unwrap();
+    let primary = prov_reg
+        .get(&primary_handle)
+        .ok_or_else(|| py_err("Primary provider not found"))?
+        .clone();
+
+    let mut builder = resilience::ResilientProviderBuilder::new(primary);
+    builder = builder.retry(RetryConfig::default());
+
+    if enable_circuit_breaker.unwrap_or(false) {
+        builder = builder.circuit_breaker(resilience::CircuitBreakerConfig::default());
+    }
+
+    for h in &fallback_handles {
+        let fb = prov_reg
+            .get(h)
+            .ok_or_else(|| py_err(&format!("Fallback provider {h} not found")))?
+            .clone();
+        builder = builder.fallback(fb);
+    }
+    drop(prov_reg);
+
+    let provider = builder.build();
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    providers().lock().unwrap().insert(id, provider);
+    Ok(id)
+}
+
+// ============ Stream Transform ============
+
+#[pyfunction]
+fn py_parse_partial_json(text: String) -> Option<String> {
+    stream_transform::parse_partial_json(&text).map(|v| v.to_string())
+}
+
+// ============ Plugin System ============
+
+fn plugin_registries() -> &'static Mutex<HashMap<u32, plugin::PluginRegistry>> {
+    use std::sync::OnceLock;
+    static REG: OnceLock<Mutex<HashMap<u32, plugin::PluginRegistry>>> = OnceLock::new();
+    REG.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[pyfunction]
+fn create_plugin_registry() -> u32 {
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    plugin_registries()
+        .lock()
+        .unwrap()
+        .insert(id, plugin::PluginRegistry::new());
+    id
+}
+
+#[pyfunction]
+fn plugin_registry_add_telemetry(handle: u32) -> PyResult<()> {
+    let mut reg = plugin_registries().lock().unwrap();
+    let registry = reg
+        .get_mut(&handle)
+        .ok_or_else(|| py_err("PluginRegistry not found"))?;
+    registry.register(Arc::new(plugin::TelemetryPlugin));
+    Ok(())
+}
+
+#[pyfunction]
+fn plugin_registry_add_memory(handle: u32) -> PyResult<()> {
+    let mut reg = plugin_registries().lock().unwrap();
+    let registry = reg
+        .get_mut(&handle)
+        .ok_or_else(|| py_err("PluginRegistry not found"))?;
+    registry.register(Arc::new(plugin::MemoryPlugin));
+    Ok(())
+}
+
+#[pyfunction]
+fn plugin_registry_list(handle: u32) -> PyResult<Vec<String>> {
+    let reg = plugin_registries().lock().unwrap();
+    let registry = reg
+        .get(&handle)
+        .ok_or_else(|| py_err("PluginRegistry not found"))?;
+    Ok(registry.list().into_iter().map(String::from).collect())
+}
+
+#[pyfunction]
+fn plugin_registry_emit(handle: u32, event_json: String) -> PyResult<()> {
+    let event: plugin::GaussEvent = serde_json::from_str(&event_json)
+        .map_err(|e| py_err(&format!("Invalid event JSON: {e}")))?;
+    let reg = plugin_registries().lock().unwrap();
+    let registry = reg
+        .get(&handle)
+        .ok_or_else(|| py_err("PluginRegistry not found"))?;
+    registry.emit(&event);
+    Ok(())
+}
+
+#[pyfunction]
+fn destroy_plugin_registry(handle: u32) -> PyResult<()> {
+    plugin_registries()
+        .lock()
+        .unwrap()
+        .remove(&handle)
+        .ok_or_else(|| py_err("PluginRegistry not found"))?;
+    Ok(())
+}
+
 /// Gauss Core Python module.
 #[pymodule]
 #[pyo3(name = "gauss_core")]
@@ -955,5 +1246,27 @@ fn gauss_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(telemetry_export_metrics, m)?)?;
     m.add_function(wrap_pyfunction!(telemetry_clear, m)?)?;
     m.add_function(wrap_pyfunction!(destroy_telemetry, m)?)?;
+    // Guardrails
+    m.add_function(wrap_pyfunction!(create_guardrail_chain, m)?)?;
+    m.add_function(wrap_pyfunction!(guardrail_chain_add_content_moderation, m)?)?;
+    m.add_function(wrap_pyfunction!(guardrail_chain_add_pii_detection, m)?)?;
+    m.add_function(wrap_pyfunction!(guardrail_chain_add_token_limit, m)?)?;
+    m.add_function(wrap_pyfunction!(guardrail_chain_add_regex_filter, m)?)?;
+    m.add_function(wrap_pyfunction!(guardrail_chain_add_schema, m)?)?;
+    m.add_function(wrap_pyfunction!(guardrail_chain_list, m)?)?;
+    m.add_function(wrap_pyfunction!(destroy_guardrail_chain, m)?)?;
+    // Resilience
+    m.add_function(wrap_pyfunction!(create_fallback_provider, m)?)?;
+    m.add_function(wrap_pyfunction!(create_circuit_breaker, m)?)?;
+    m.add_function(wrap_pyfunction!(create_resilient_provider, m)?)?;
+    // Stream Transform
+    m.add_function(wrap_pyfunction!(py_parse_partial_json, m)?)?;
+    // Plugin
+    m.add_function(wrap_pyfunction!(create_plugin_registry, m)?)?;
+    m.add_function(wrap_pyfunction!(plugin_registry_add_telemetry, m)?)?;
+    m.add_function(wrap_pyfunction!(plugin_registry_add_memory, m)?)?;
+    m.add_function(wrap_pyfunction!(plugin_registry_list, m)?)?;
+    m.add_function(wrap_pyfunction!(plugin_registry_emit, m)?)?;
+    m.add_function(wrap_pyfunction!(destroy_plugin_registry, m)?)?;
     Ok(())
 }

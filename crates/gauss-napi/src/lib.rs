@@ -1090,3 +1090,299 @@ pub fn destroy_telemetry(handle: u32) -> Result<()> {
         .ok_or_else(|| napi::Error::from_reason("TelemetryCollector not found"))?;
     Ok(())
 }
+
+// ============ Guardrails ============
+
+use gauss_core::guardrail;
+
+fn guardrail_chain_registry() -> &'static Mutex<HashMap<u32, guardrail::GuardrailChain>> {
+    use std::sync::OnceLock;
+    static REG: OnceLock<Mutex<HashMap<u32, guardrail::GuardrailChain>>> = OnceLock::new();
+    REG.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[napi]
+pub fn create_guardrail_chain() -> u32 {
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    guardrail_chain_registry()
+        .lock()
+        .unwrap()
+        .insert(id, guardrail::GuardrailChain::new());
+    id
+}
+
+#[napi]
+pub fn guardrail_chain_add_content_moderation(
+    handle: u32,
+    block_patterns: Vec<String>,
+    warn_patterns: Vec<String>,
+) -> Result<()> {
+    let mut reg = guardrail_chain_registry().lock().unwrap();
+    let chain = reg
+        .get_mut(&handle)
+        .ok_or_else(|| napi::Error::from_reason("GuardrailChain not found"))?;
+    let mut g = guardrail::ContentModerationGuardrail::new();
+    for p in block_patterns {
+        g = g.block_pattern(&p, format!("Blocked pattern: {p}"));
+    }
+    for p in warn_patterns {
+        g = g.warn_pattern(&p, format!("Warning pattern: {p}"));
+    }
+    chain.add(Arc::new(g));
+    Ok(())
+}
+
+#[napi]
+pub fn guardrail_chain_add_pii_detection(handle: u32, action: String) -> Result<()> {
+    let pii_action = match action.as_str() {
+        "block" => guardrail::PiiAction::Block,
+        "warn" => guardrail::PiiAction::Warn,
+        "redact" => guardrail::PiiAction::Redact,
+        _ => {
+            return Err(napi::Error::from_reason(
+                "Invalid PII action: block|warn|redact",
+            ));
+        }
+    };
+    let mut reg = guardrail_chain_registry().lock().unwrap();
+    let chain = reg
+        .get_mut(&handle)
+        .ok_or_else(|| napi::Error::from_reason("GuardrailChain not found"))?;
+    chain.add(Arc::new(guardrail::PiiDetectionGuardrail::new(pii_action)));
+    Ok(())
+}
+
+#[napi]
+pub fn guardrail_chain_add_token_limit(
+    handle: u32,
+    max_input: Option<u32>,
+    max_output: Option<u32>,
+) -> Result<()> {
+    let mut g = guardrail::TokenLimitGuardrail::new();
+    if let Some(m) = max_input {
+        g = g.max_input(m as usize);
+    }
+    if let Some(m) = max_output {
+        g = g.max_output(m as usize);
+    }
+    let mut reg = guardrail_chain_registry().lock().unwrap();
+    let chain = reg
+        .get_mut(&handle)
+        .ok_or_else(|| napi::Error::from_reason("GuardrailChain not found"))?;
+    chain.add(Arc::new(g));
+    Ok(())
+}
+
+#[napi]
+pub fn guardrail_chain_add_regex_filter(
+    handle: u32,
+    block_rules: Vec<String>,
+    warn_rules: Vec<String>,
+) -> Result<()> {
+    let mut g = guardrail::RegexFilterGuardrail::new();
+    for r in block_rules {
+        g = g.block(&r, format!("Blocked by regex: {r}"));
+    }
+    for r in warn_rules {
+        g = g.warn(&r, format!("Warning by regex: {r}"));
+    }
+    let mut reg = guardrail_chain_registry().lock().unwrap();
+    let chain = reg
+        .get_mut(&handle)
+        .ok_or_else(|| napi::Error::from_reason("GuardrailChain not found"))?;
+    chain.add(Arc::new(g));
+    Ok(())
+}
+
+#[napi]
+pub fn guardrail_chain_add_schema(handle: u32, schema_json: String) -> Result<()> {
+    let schema: serde_json::Value = serde_json::from_str(&schema_json)
+        .map_err(|e| napi::Error::from_reason(format!("Invalid JSON schema: {e}")))?;
+    let mut reg = guardrail_chain_registry().lock().unwrap();
+    let chain = reg
+        .get_mut(&handle)
+        .ok_or_else(|| napi::Error::from_reason("GuardrailChain not found"))?;
+    chain.add(Arc::new(guardrail::SchemaGuardrail::new(schema)));
+    Ok(())
+}
+
+#[napi]
+pub fn guardrail_chain_list(handle: u32) -> Result<Vec<String>> {
+    let reg = guardrail_chain_registry().lock().unwrap();
+    let chain = reg
+        .get(&handle)
+        .ok_or_else(|| napi::Error::from_reason("GuardrailChain not found"))?;
+    Ok(chain.list().into_iter().map(String::from).collect())
+}
+
+#[napi]
+pub fn destroy_guardrail_chain(handle: u32) -> Result<()> {
+    guardrail_chain_registry()
+        .lock()
+        .unwrap()
+        .remove(&handle)
+        .ok_or_else(|| napi::Error::from_reason("GuardrailChain not found"))?;
+    Ok(())
+}
+
+// ============ Resilience ============
+
+use gauss_core::resilience;
+
+#[napi]
+pub fn create_fallback_provider(provider_handles: Vec<u32>) -> Result<u32> {
+    let prov_reg = providers().lock().unwrap();
+    let mut providers_vec: Vec<Arc<dyn Provider>> = Vec::new();
+    for h in provider_handles {
+        let p = prov_reg
+            .get(&h)
+            .ok_or_else(|| napi::Error::from_reason(format!("Provider {h} not found")))?
+            .clone();
+        providers_vec.push(p);
+    }
+    drop(prov_reg);
+
+    let fallback = Arc::new(resilience::FallbackProvider::new(providers_vec));
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    providers().lock().unwrap().insert(id, fallback);
+    Ok(id)
+}
+
+#[napi]
+pub fn create_circuit_breaker(
+    provider_handle: u32,
+    failure_threshold: Option<u32>,
+    recovery_timeout_ms: Option<u32>,
+) -> Result<u32> {
+    let inner = providers()
+        .lock()
+        .unwrap()
+        .get(&provider_handle)
+        .ok_or_else(|| napi::Error::from_reason("Provider not found"))?
+        .clone();
+
+    let config = resilience::CircuitBreakerConfig {
+        failure_threshold: failure_threshold.unwrap_or(5),
+        recovery_timeout_ms: recovery_timeout_ms.map(|v| v as u64).unwrap_or(30_000),
+        success_threshold: 1,
+    };
+
+    let cb = Arc::new(resilience::CircuitBreaker::new(inner, config));
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    providers().lock().unwrap().insert(id, cb);
+    Ok(id)
+}
+
+#[napi]
+pub fn create_resilient_provider(
+    primary_handle: u32,
+    fallback_handles: Vec<u32>,
+    enable_circuit_breaker: Option<bool>,
+) -> Result<u32> {
+    let prov_reg = providers().lock().unwrap();
+    let primary = prov_reg
+        .get(&primary_handle)
+        .ok_or_else(|| napi::Error::from_reason("Primary provider not found"))?
+        .clone();
+
+    let mut builder = resilience::ResilientProviderBuilder::new(primary);
+    builder = builder.retry(RetryConfig::default());
+
+    if enable_circuit_breaker.unwrap_or(false) {
+        builder = builder.circuit_breaker(resilience::CircuitBreakerConfig::default());
+    }
+
+    for h in &fallback_handles {
+        let fb = prov_reg
+            .get(h)
+            .ok_or_else(|| napi::Error::from_reason(format!("Fallback provider {h} not found")))?
+            .clone();
+        builder = builder.fallback(fb);
+    }
+    drop(prov_reg);
+
+    let provider = builder.build();
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    providers().lock().unwrap().insert(id, provider);
+    Ok(id)
+}
+
+// ============ Stream Transform ============
+
+use gauss_core::stream_transform;
+
+#[napi]
+pub fn parse_partial_json(text: String) -> Option<String> {
+    stream_transform::parse_partial_json(&text).map(|v| v.to_string())
+}
+
+// ============ Plugin System ============
+
+use gauss_core::plugin;
+
+fn plugin_registry_reg() -> &'static Mutex<HashMap<u32, plugin::PluginRegistry>> {
+    use std::sync::OnceLock;
+    static REG: OnceLock<Mutex<HashMap<u32, plugin::PluginRegistry>>> = OnceLock::new();
+    REG.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[napi]
+pub fn create_plugin_registry() -> u32 {
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    plugin_registry_reg()
+        .lock()
+        .unwrap()
+        .insert(id, plugin::PluginRegistry::new());
+    id
+}
+
+#[napi]
+pub fn plugin_registry_add_telemetry(handle: u32) -> Result<()> {
+    let mut reg = plugin_registry_reg().lock().unwrap();
+    let registry = reg
+        .get_mut(&handle)
+        .ok_or_else(|| napi::Error::from_reason("PluginRegistry not found"))?;
+    registry.register(Arc::new(plugin::TelemetryPlugin));
+    Ok(())
+}
+
+#[napi]
+pub fn plugin_registry_add_memory(handle: u32) -> Result<()> {
+    let mut reg = plugin_registry_reg().lock().unwrap();
+    let registry = reg
+        .get_mut(&handle)
+        .ok_or_else(|| napi::Error::from_reason("PluginRegistry not found"))?;
+    registry.register(Arc::new(plugin::MemoryPlugin));
+    Ok(())
+}
+
+#[napi]
+pub fn plugin_registry_list(handle: u32) -> Result<Vec<String>> {
+    let reg = plugin_registry_reg().lock().unwrap();
+    let registry = reg
+        .get(&handle)
+        .ok_or_else(|| napi::Error::from_reason("PluginRegistry not found"))?;
+    Ok(registry.list().into_iter().map(String::from).collect())
+}
+
+#[napi]
+pub fn plugin_registry_emit(handle: u32, event_json: String) -> Result<()> {
+    let event: plugin::GaussEvent = serde_json::from_str(&event_json)
+        .map_err(|e| napi::Error::from_reason(format!("Invalid event JSON: {e}")))?;
+    let reg = plugin_registry_reg().lock().unwrap();
+    let registry = reg
+        .get(&handle)
+        .ok_or_else(|| napi::Error::from_reason("PluginRegistry not found"))?;
+    registry.emit(&event);
+    Ok(())
+}
+
+#[napi]
+pub fn destroy_plugin_registry(handle: u32) -> Result<()> {
+    plugin_registry_reg()
+        .lock()
+        .unwrap()
+        .remove(&handle)
+        .ok_or_else(|| napi::Error::from_reason("PluginRegistry not found"))?;
+    Ok(())
+}
