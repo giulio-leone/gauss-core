@@ -1,0 +1,18 @@
+[package]
+name = "gauss-cli"
+description = "Gauss CLI — AI agent runner"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "gauss"
+path = "src/main.rs"
+
+[dependencies]
+gauss-core = { workspace = true }
+tokio = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+serde_json = { workspace = true }
+tracing-subscriber = { workspace = true }

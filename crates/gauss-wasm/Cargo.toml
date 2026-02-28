@@ -1,0 +1,18 @@
+[package]
+name = "gauss-wasm"
+description = "Gauss Core WASM bindings for Browser/Edge"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+gauss-core = { workspace = true }
+wasm-bindgen = "0.2"
+serde-wasm-bindgen = "0.6"
+serde_json = { workspace = true }
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["console"] }

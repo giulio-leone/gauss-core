@@ -1,0 +1,16 @@
+[package]
+name = "gauss-python"
+description = "Gauss Core Python bindings"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+name = "gauss_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+gauss-core = { workspace = true }
+pyo3 = { version = "0.23", features = ["extension-module"] }
+serde_json = { workspace = true }
