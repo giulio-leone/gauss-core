@@ -5,3 +5,6 @@ Cargo.lock
 .DS_Store
 .idea/
 .vscode/
+packages/gauss/.npmrc
+packages/gauss/dist/
+packages/gauss/node_modules/
