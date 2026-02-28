@@ -452,10 +452,16 @@ pub fn destroy_memory(handle: u32) -> Result<()> {
 
 // ============ Context ============
 
-/// Approximate token count for text.
+/// Precise token count for text (tiktoken cl100k_base).
 #[napi]
 pub fn count_tokens(text: String) -> u32 {
-    context::count_tokens_approx(&text) as u32
+    context::count_tokens(&text) as u32
+}
+
+/// Token count for a specific model's encoding.
+#[napi]
+pub fn count_tokens_for_model(text: String, model: String) -> u32 {
+    context::count_tokens_for_model(&text, &model) as u32
 }
 
 /// Token count for an array of messages.

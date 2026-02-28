@@ -281,7 +281,7 @@ pub fn destroy_memory(handle: u32) -> Result<(), JsValue> {
 
 #[wasm_bindgen(js_name = "countTokens")]
 pub fn count_tokens(text: &str) -> u32 {
-    context::count_tokens_approx(text) as u32
+    context::count_tokens(text) as u32
 }
 
 #[wasm_bindgen(js_name = "countMessageTokens")]

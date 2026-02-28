@@ -365,7 +365,12 @@ fn destroy_memory(handle: u32) -> PyResult<()> {
 
 #[pyfunction]
 fn count_tokens(text: &str) -> u32 {
-    context::count_tokens_approx(text) as u32
+    context::count_tokens(text) as u32
+}
+
+#[pyfunction]
+fn count_tokens_for_model(text: &str, model: &str) -> u32 {
+    context::count_tokens_for_model(text, model) as u32
 }
 
 #[pyfunction]
@@ -905,6 +910,7 @@ fn gauss_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(destroy_memory, m)?)?;
     // Context
     m.add_function(wrap_pyfunction!(count_tokens, m)?)?;
+    m.add_function(wrap_pyfunction!(count_tokens_for_model, m)?)?;
     m.add_function(wrap_pyfunction!(count_message_tokens, m)?)?;
     m.add_function(wrap_pyfunction!(get_context_window_size, m)?)?;
     // RAG
