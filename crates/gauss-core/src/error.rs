@@ -83,6 +83,19 @@ impl GaussError {
             source: None,
         }
     }
+
+    pub fn rate_limited(provider: impl Into<String>, _message: impl Into<String>) -> Self {
+        Self::RateLimited {
+            provider: provider.into(),
+            retry_after_ms: None,
+        }
+    }
+
+    pub fn authentication(provider: impl Into<String>, _message: impl Into<String>) -> Self {
+        Self::Authentication {
+            provider: provider.into(),
+        }
+    }
 }
 
 pub type Result<T> = std::result::Result<T, GaussError>;

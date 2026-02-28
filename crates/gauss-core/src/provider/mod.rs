@@ -133,4 +133,7 @@ pub trait Provider: Send + Sync {
     ) -> error::Result<Box<dyn futures::Stream<Item = error::Result<StreamEvent>> + Send + Unpin>>;
 }
 
+pub mod anthropic;
+pub mod google;
 pub mod openai;
+pub mod retry;
