@@ -2,14 +2,24 @@
 //!
 //! High-performance AI agent engine in Rust.
 //! Provides the foundation for building AI agents with tool use,
-//! streaming, structured output, and multi-provider support.
+//! streaming, structured output, multi-provider support, memory,
+//! RAG, MCP, middleware, observability, and multi-agent networks.
 
 pub mod agent;
+pub mod context;
 pub mod error;
+pub mod eval;
+pub mod hitl;
+pub mod mcp;
+pub mod memory;
 pub mod message;
+pub mod middleware;
+pub mod network;
 pub mod provider;
+pub mod rag;
 pub mod streaming;
 pub mod team;
+pub mod telemetry;
 pub mod tool;
 pub mod workflow;
 
