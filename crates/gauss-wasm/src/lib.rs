@@ -2,6 +2,7 @@
 #![allow(clippy::arc_with_non_send_sync)]
 #![allow(clippy::await_holding_refcell_ref)]
 
+use futures::StreamExt;
 use gauss_core::Shared;
 use gauss_core::agent::{Agent as RustAgent, StopCondition};
 use gauss_core::context;
@@ -19,6 +20,7 @@ use gauss_core::provider::openai::OpenAiProvider;
 use gauss_core::provider::retry::{RetryConfig, RetryProvider};
 use gauss_core::provider::{GenerateOptions, Provider, ProviderConfig};
 use gauss_core::rag;
+use gauss_core::streaming::StreamEvent;
 use gauss_core::telemetry;
 use serde_json::json;
 use std::cell::RefCell;
@@ -145,6 +147,73 @@ pub async fn generate(
     });
 
     serde_json::to_string(&output).map_err(|e| JsValue::from_str(&format!("Serialize error: {e}")))
+}
+
+/// Stream generate on a provider. Returns a browser ReadableStream of JSON-serialized StreamEvents.
+#[wasm_bindgen(js_name = "generateStream")]
+pub async fn generate_stream(
+    provider_handle: u32,
+    messages_json: &str,
+    temperature: Option<f64>,
+    max_tokens: Option<u32>,
+) -> Result<web_sys::ReadableStream, JsValue> {
+    let provider = get_provider(provider_handle)?;
+    let rust_msgs = parse_messages(messages_json)?;
+
+    let opts = GenerateOptions {
+        temperature,
+        max_tokens,
+        ..GenerateOptions::default()
+    };
+
+    let mut stream = provider
+        .stream(&rust_msgs, &[], &opts)
+        .await
+        .map_err(|e| JsValue::from_str(&format!("Stream error: {e}")))?;
+
+    let pull = Closure::wrap(Box::new(
+        move |controller: web_sys::ReadableStreamDefaultController| -> js_sys::Promise {
+            let controller = controller.clone();
+            let stream_ref = unsafe {
+                // SAFETY: WASM is single-threaded; the stream lives for the duration of the ReadableStream
+                #[allow(clippy::deref_addrof)]
+                &mut *(&raw mut stream)
+            };
+            wasm_bindgen_futures::future_to_promise(async move {
+                match StreamExt::next(stream_ref).await {
+                    Some(Ok(event)) => {
+                        let json = serde_json::to_string(&event)
+                            .map_err(|e| JsValue::from_str(&format!("{e}")))?;
+                        controller.enqueue_with_chunk(&JsValue::from_str(&json))?;
+                        if matches!(event, StreamEvent::Done) {
+                            controller.close()?;
+                        }
+                        Ok(JsValue::UNDEFINED)
+                    }
+                    Some(Err(e)) => {
+                        controller.error_with_e(&JsValue::from_str(&format!("{e}")));
+                        Err(JsValue::from_str(&format!("{e}")))
+                    }
+                    None => {
+                        controller.close()?;
+                        Ok(JsValue::UNDEFINED)
+                    }
+                }
+            })
+        },
+    )
+        as Box<dyn FnMut(web_sys::ReadableStreamDefaultController) -> js_sys::Promise>);
+
+    let underlying_source = js_sys::Object::new();
+    js_sys::Reflect::set(
+        &underlying_source,
+        &"pull".into(),
+        pull.as_ref().unchecked_ref(),
+    )?;
+    pull.forget();
+
+    web_sys::ReadableStream::new_with_underlying_source(&underlying_source)
+        .map_err(|e| JsValue::from_str(&format!("ReadableStream creation error: {e:?}")))
 }
 
 /// Run an agent. Returns JSON string.

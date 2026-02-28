@@ -1,6 +1,6 @@
 {
   "name": "@gauss-ai/core",
-  "version": "0.6.0",
+  "version": "1.0.0",
   "description": "Gauss Core — Native Rust engine for Gauss AI framework",
   "main": "index.js",
   "types": "index.d.ts",

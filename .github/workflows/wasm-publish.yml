@@ -1,0 +1,57 @@
+name: Publish WASM
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-wasm:
+    name: Build WASM package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build WASM (web target)
+        run: wasm-pack build crates/gauss-wasm --target web --release --scope gauss-ai
+
+      - name: Override package.json
+        run: cp packages/gauss-wasm/package.json crates/gauss-wasm/pkg/package.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-pkg
+          path: crates/gauss-wasm/pkg/
+
+  publish:
+    name: Publish to npm
+    needs: [build-wasm]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasm-pkg
+          path: pkg/
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Publish
+        run: cd pkg && npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

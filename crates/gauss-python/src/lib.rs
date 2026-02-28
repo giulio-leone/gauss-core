@@ -305,8 +305,7 @@ fn memory_store(
             .get(&handle)
             .cloned()
             .ok_or_else(|| py_err("Memory not found"))?;
-        let entry: memory::MemoryEntry =
-            serde_json::from_str(&entry_json).map_err(py_err)?;
+        let entry: memory::MemoryEntry = serde_json::from_str(&entry_json).map_err(py_err)?;
         mem.store(entry).await.map_err(py_err)
     })
 }
@@ -502,8 +501,7 @@ fn mcp_server_handle(
             .get(&handle)
             .cloned()
             .ok_or_else(|| py_err("McpServer not found"))?;
-        let msg: mcp::JsonRpcMessage =
-            serde_json::from_str(&message_json).map_err(py_err)?;
+        let msg: mcp::JsonRpcMessage = serde_json::from_str(&message_json).map_err(py_err)?;
         let resp = server
             .lock()
             .await

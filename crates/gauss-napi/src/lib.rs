@@ -332,32 +332,21 @@ pub async fn agent_run_with_tool_executor(
                     "tool": tn,
                     "args": args
                 }))
-                .map_err(|e| {
-                    gauss_core::error::GaussError::tool(&tn, format!("Serialize: {e}"))
-                })?;
+                .map_err(|e| gauss_core::error::GaussError::tool(&tn, format!("Serialize: {e}")))?;
 
                 let promise: Promise<String> = exec
                     .call_async::<Promise<String>>(call_json)
                     .await
                     .map_err(|e| {
-                        gauss_core::error::GaussError::tool(
-                            &tn,
-                            format!("NAPI call error: {e}"),
-                        )
+                        gauss_core::error::GaussError::tool(&tn, format!("NAPI call error: {e}"))
                     })?;
 
                 let result_str = promise.await.map_err(|e| {
-                    gauss_core::error::GaussError::tool(
-                        &tn,
-                        format!("JS Promise error: {e}"),
-                    )
+                    gauss_core::error::GaussError::tool(&tn, format!("JS Promise error: {e}"))
                 })?;
 
                 serde_json::from_str(&result_str).map_err(|e| {
-                    gauss_core::error::GaussError::tool(
-                        &tn,
-                        format!("Deserialize: {e}"),
-                    )
+                    gauss_core::error::GaussError::tool(&tn, format!("Deserialize: {e}"))
                 })
             }
         });
@@ -389,8 +378,10 @@ pub async fn agent_stream_with_tool_executor(
     tools: Vec<ToolDef>,
     messages: Vec<JsMessage>,
     options: Option<AgentOptions>,
-    #[napi(ts_arg_type = "(eventJson: string) => void")]
-    stream_callback: ThreadsafeFunction<String, ErrorStrategy::Fatal>,
+    #[napi(ts_arg_type = "(eventJson: string) => void")] stream_callback: ThreadsafeFunction<
+        String,
+        ErrorStrategy::Fatal,
+    >,
     #[napi(ts_arg_type = "(callJson: string) => Promise<string>")]
     tool_executor: ThreadsafeFunction<String, ErrorStrategy::Fatal>,
 ) -> Result<AgentResult> {
@@ -454,32 +445,21 @@ pub async fn agent_stream_with_tool_executor(
                     "tool": tn,
                     "args": args
                 }))
-                .map_err(|e| {
-                    gauss_core::error::GaussError::tool(&tn, format!("Serialize: {e}"))
-                })?;
+                .map_err(|e| gauss_core::error::GaussError::tool(&tn, format!("Serialize: {e}")))?;
 
                 let promise: Promise<String> = exec
                     .call_async::<Promise<String>>(call_json)
                     .await
                     .map_err(|e| {
-                        gauss_core::error::GaussError::tool(
-                            &tn,
-                            format!("NAPI call error: {e}"),
-                        )
+                        gauss_core::error::GaussError::tool(&tn, format!("NAPI call error: {e}"))
                     })?;
 
                 let result_str = promise.await.map_err(|e| {
-                    gauss_core::error::GaussError::tool(
-                        &tn,
-                        format!("JS Promise error: {e}"),
-                    )
+                    gauss_core::error::GaussError::tool(&tn, format!("JS Promise error: {e}"))
                 })?;
 
                 serde_json::from_str(&result_str).map_err(|e| {
-                    gauss_core::error::GaussError::tool(
-                        &tn,
-                        format!("Deserialize: {e}"),
-                    )
+                    gauss_core::error::GaussError::tool(&tn, format!("Deserialize: {e}"))
                 })
             }
         });
@@ -509,7 +489,10 @@ pub async fn agent_stream_with_tool_executor(
                     "delta": delta,
                 }))
                 .unwrap_or_default();
-                let _ = stream_callback.call(event_json, napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking);
+                let _ = stream_callback.call(
+                    event_json,
+                    napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking,
+                );
             }
             Ok(gauss_core::agent::AgentStreamEvent::StepStart { step }) => {
                 let event_json = serde_json::to_string(&json!({
@@ -517,7 +500,10 @@ pub async fn agent_stream_with_tool_executor(
                     "step": step,
                 }))
                 .unwrap_or_default();
-                let _ = stream_callback.call(event_json, napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking);
+                let _ = stream_callback.call(
+                    event_json,
+                    napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking,
+                );
             }
             Ok(gauss_core::agent::AgentStreamEvent::ToolCallDelta { step, index }) => {
                 let event_json = serde_json::to_string(&json!({
@@ -526,9 +512,17 @@ pub async fn agent_stream_with_tool_executor(
                     "index": index,
                 }))
                 .unwrap_or_default();
-                let _ = stream_callback.call(event_json, napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking);
+                let _ = stream_callback.call(
+                    event_json,
+                    napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking,
+                );
             }
-            Ok(gauss_core::agent::AgentStreamEvent::ToolResult { step, tool_name, result, is_error }) => {
+            Ok(gauss_core::agent::AgentStreamEvent::ToolResult {
+                step,
+                tool_name,
+                result,
+                is_error,
+            }) => {
                 let event_json = serde_json::to_string(&json!({
                     "type": "tool_result",
                     "step": step,
@@ -537,9 +531,16 @@ pub async fn agent_stream_with_tool_executor(
                     "isError": is_error,
                 }))
                 .unwrap_or_default();
-                let _ = stream_callback.call(event_json, napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking);
+                let _ = stream_callback.call(
+                    event_json,
+                    napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking,
+                );
             }
-            Ok(gauss_core::agent::AgentStreamEvent::StepFinish { step, finish_reason, has_tool_calls }) => {
+            Ok(gauss_core::agent::AgentStreamEvent::StepFinish {
+                step,
+                finish_reason,
+                has_tool_calls,
+            }) => {
                 let event_json = serde_json::to_string(&json!({
                     "type": "step_finish",
                     "step": step,
@@ -547,7 +548,10 @@ pub async fn agent_stream_with_tool_executor(
                     "hasToolCalls": has_tool_calls,
                 }))
                 .unwrap_or_default();
-                let _ = stream_callback.call(event_json, napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking);
+                let _ = stream_callback.call(
+                    event_json,
+                    napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking,
+                );
             }
             Ok(gauss_core::agent::AgentStreamEvent::Done { text, steps, usage }) => {
                 final_text = text;
@@ -563,7 +567,10 @@ pub async fn agent_stream_with_tool_executor(
                     "outputTokens": final_output_tokens,
                 }))
                 .unwrap_or_default();
-                let _ = stream_callback.call(event_json, napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking);
+                let _ = stream_callback.call(
+                    event_json,
+                    napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking,
+                );
             }
             Ok(gauss_core::agent::AgentStreamEvent::RawEvent { step, event }) => {
                 let event_json = serde_json::to_string(&json!({
@@ -572,7 +579,10 @@ pub async fn agent_stream_with_tool_executor(
                     "event": format!("{:?}", event),
                 }))
                 .unwrap_or_default();
-                let _ = stream_callback.call(event_json, napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking);
+                let _ = stream_callback.call(
+                    event_json,
+                    napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking,
+                );
             }
             Err(e) => {
                 let event_json = serde_json::to_string(&json!({
@@ -580,7 +590,10 @@ pub async fn agent_stream_with_tool_executor(
                     "error": format!("{e}"),
                 }))
                 .unwrap_or_default();
-                let _ = stream_callback.call(event_json, napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking);
+                let _ = stream_callback.call(
+                    event_json,
+                    napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking,
+                );
                 return Err(napi::Error::from_reason(format!("Stream error: {e}")));
             }
         }

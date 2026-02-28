@@ -1,0 +1,35 @@
+{
+  "name": "@gauss-ai/wasm",
+  "version": "1.0.0",
+  "description": "Gauss Core — WASM bindings for Browser/Edge runtime",
+  "type": "module",
+  "main": "gauss_wasm.js",
+  "types": "gauss_wasm.d.ts",
+  "files": [
+    "gauss_wasm_bg.wasm",
+    "gauss_wasm.js",
+    "gauss_wasm.d.ts",
+    "gauss_wasm_bg.wasm.d.ts"
+  ],
+  "keywords": [
+    "ai",
+    "agent",
+    "wasm",
+    "webassembly",
+    "gauss",
+    "llm",
+    "browser"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/giulio-leone/gauss-core"
+  },
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./gauss_wasm.d.ts",
+      "import": "./gauss_wasm.js"
+    }
+  }
+}

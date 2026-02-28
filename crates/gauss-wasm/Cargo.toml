@@ -9,14 +9,21 @@ license.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
+[package.metadata.wasm-pack.profile.dev]
+wasm-opt = false
+
 [dependencies]
 gauss-core = { workspace = true, features = ["wasm"] }
 wasm-bindgen = "0.2"
 serde-wasm-bindgen = "0.6"
 serde_json = { workspace = true }
 js-sys = "0.3"
-web-sys = { version = "0.3", features = ["console"] }
+web-sys = { version = "0.3", features = ["console", "ReadableStream", "ReadableStreamDefaultController"] }
 wasm-bindgen-futures = "0.4"
+futures = { workspace = true }
 gloo-timers = { version = "0.3", features = ["futures"] }
 getrandom = { version = "0.3", features = ["wasm_js"] }
 uuid = { version = "1", features = ["v4", "js"] }

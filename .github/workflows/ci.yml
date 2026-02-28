@@ -86,14 +86,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - name: Install maturin
-        run: pip install maturin
-      - name: Build Python wheel
+      - name: Create venv and install
         working-directory: packages/gauss-py
-        run: maturin develop
-      - name: Install test deps
-        working-directory: packages/gauss-py
-        run: pip install pytest pytest-asyncio
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install maturin pytest pytest-asyncio
+          maturin develop
       - name: Run tests
         working-directory: packages/gauss-py
-        run: python -m pytest tests/ -v
+        run: |
+          source .venv/bin/activate
+          python -m pytest tests/ -v
