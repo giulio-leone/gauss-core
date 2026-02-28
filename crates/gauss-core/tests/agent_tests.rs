@@ -238,7 +238,9 @@ async fn test_agent_stop_on_tool_call() {
     let agent = Agent::builder("stop-agent", provider)
         .tool(tool)
         .max_steps(10)
-        .stop_when(gauss_core::agent::StopCondition::HasToolCall("final_answer".to_string()))
+        .stop_when(gauss_core::agent::StopCondition::HasToolCall(
+            "final_answer".to_string(),
+        ))
         .build();
 
     let output = agent.run(vec![Message::user("what is 42?")]).await.unwrap();
@@ -281,7 +283,10 @@ async fn test_agent_structured_output() {
         .output_schema(schema)
         .build();
 
-    let output = agent.run(vec![Message::user("describe Alice")]).await.unwrap();
+    let output = agent
+        .run(vec![Message::user("describe Alice")])
+        .await
+        .unwrap();
 
     assert!(output.structured_output.is_some());
     let parsed = output.structured_output.unwrap();
