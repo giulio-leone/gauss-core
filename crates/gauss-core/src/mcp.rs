@@ -763,10 +763,10 @@ impl HttpTransport {
         // Parse SSE events (data: lines)
         let mut pending = self.pending.lock().await;
         for line in text.lines() {
-            if let Some(data) = line.strip_prefix("data: ") {
-                if let Ok(msg) = serde_json::from_str::<JsonRpcMessage>(data) {
-                    pending.push(msg);
-                }
+            if let Some(data) = line.strip_prefix("data: ")
+                && let Ok(msg) = serde_json::from_str::<JsonRpcMessage>(data)
+            {
+                pending.push(msg);
             }
         }
         Ok(())
@@ -799,10 +799,10 @@ impl McpTransport for HttpTransport {
             .await
             .map_err(|e| error::GaussError::tool("mcp", format!("HTTP read error: {e}")))?;
 
-        if !body.trim().is_empty() {
-            if let Ok(msg) = serde_json::from_str::<JsonRpcMessage>(&body) {
-                self.pending.lock().await.push(msg);
-            }
+        if !body.trim().is_empty()
+            && let Ok(msg) = serde_json::from_str::<JsonRpcMessage>(&body)
+        {
+            self.pending.lock().await.push(msg);
         }
         Ok(())
     }

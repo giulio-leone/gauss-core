@@ -58,6 +58,18 @@ pub enum GaussError {
     #[error("No content generated")]
     NoContentGenerated,
 
+    #[error("Guardrail blocked: {reason}")]
+    Guardrail {
+        reason: String,
+        guardrail: Option<String>,
+    },
+
+    #[error("Circuit breaker open for provider '{provider}'")]
+    CircuitBreakerOpen { provider: String },
+
+    #[error("Plugin error in '{plugin}': {message}")]
+    PluginError { plugin: String, message: String },
+
     #[error("Internal error: {message}")]
     Internal { message: String },
 }

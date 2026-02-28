@@ -30,6 +30,12 @@ pub enum StreamEvent {
     /// Token usage statistics.
     Usage(Usage),
 
+    /// A partial structured output object (incremental JSON parse).
+    ObjectDelta(serde_json::Value),
+
+    /// The final validated structured output.
+    ObjectResult(serde_json::Value),
+
     /// Stream completed.
     Done,
 

@@ -31,6 +31,7 @@ bytes = "1"
 pin-project-lite = "0.2"
 tokio-stream = { version = "0.1", optional = true }
 eventsource-stream = "0.2"
+regex = "1"
 secrecy = { version = "0.10", features = ["serde"] }
 url = "2"
 gloo-timers = { version = "0.3", features = ["futures"], optional = true }
