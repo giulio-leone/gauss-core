@@ -1,6 +1,6 @@
 {
   "name": "@giulio-leone/gauss",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "Gauss — Cross-platform AI Agent Engine powered by Rust",
   "type": "module",
   "main": "./dist/index.cjs",
