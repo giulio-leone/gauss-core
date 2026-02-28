@@ -23,11 +23,20 @@ pub enum StopCondition {
 }
 
 /// Callback types for agent events.
+#[cfg(not(target_arch = "wasm32"))]
 pub type OnStepFinishFn =
     Arc<dyn Fn(&StepResult) -> Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync>;
+#[cfg(not(target_arch = "wasm32"))]
 pub type OnToolCallFn = Arc<
     dyn Fn(&ToolCallInfo) -> Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync,
 >;
+
+#[cfg(target_arch = "wasm32")]
+pub type OnStepFinishFn =
+    std::rc::Rc<dyn Fn(&StepResult) -> Pin<Box<dyn std::future::Future<Output = ()>>>>;
+#[cfg(target_arch = "wasm32")]
+pub type OnToolCallFn =
+    std::rc::Rc<dyn Fn(&ToolCallInfo) -> Pin<Box<dyn std::future::Future<Output = ()>>>>;
 
 /// Output from a complete agent run.
 #[derive(Debug, Clone)]
@@ -69,7 +78,7 @@ pub struct ToolResultInfo {
 /// The main Agent. Replaces ToolLoopAgent from AI SDK.
 pub struct Agent {
     pub name: String,
-    provider: Arc<dyn Provider>,
+    provider: crate::Shared<dyn Provider>,
     instructions: Option<String>,
     tools: Vec<Tool>,
     options: GenerateOptions,
@@ -96,7 +105,7 @@ impl Clone for Agent {
 }
 
 impl Agent {
-    pub fn builder(name: impl Into<String>, provider: Arc<dyn Provider>) -> AgentBuilder {
+    pub fn builder(name: impl Into<String>, provider: crate::Shared<dyn Provider>) -> AgentBuilder {
         AgentBuilder {
             name: name.into(),
             provider,
@@ -321,6 +330,7 @@ impl Agent {
     }
 
     /// Stream agent execution, yielding events per step.
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn run_stream(
         &self,
         messages: Vec<Message>,
@@ -478,6 +488,27 @@ impl Agent {
 
         Ok(Box::pin(stream))
     }
+
+    /// Stream agent execution (WASM — no Send bound).
+    #[cfg(target_arch = "wasm32")]
+    pub async fn run_stream(
+        &self,
+        messages: Vec<Message>,
+    ) -> error::Result<Pin<Box<dyn Stream<Item = error::Result<AgentStreamEvent>> + '_>>>
+    {
+        // Delegate to the same internal logic via run() for WASM
+        // Full streaming support on WASM requires further async refactoring
+        let output = self.run(messages).await?;
+        let events: Vec<error::Result<AgentStreamEvent>> = vec![
+            Ok(AgentStreamEvent::StepStart { step: 0 }),
+            Ok(AgentStreamEvent::StepFinish {
+                step: 0,
+                finish_reason: crate::provider::FinishReason::Stop,
+                has_tool_calls: false,
+            }),
+        ];
+        Ok(Box::pin(futures::stream::iter(events)))
+    }
 }
 
 /// Events emitted during agent streaming.
@@ -519,7 +550,7 @@ pub enum AgentStreamEvent {
 /// Builder for constructing Agent instances.
 pub struct AgentBuilder {
     name: String,
-    provider: Arc<dyn Provider>,
+    provider: crate::Shared<dyn Provider>,
     instructions: Option<String>,
     tools: Vec<Tool>,
     options: GenerateOptions,

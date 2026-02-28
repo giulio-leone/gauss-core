@@ -10,7 +10,7 @@ license.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
-gauss-core = { workspace = true }
+gauss-core = { workspace = true, features = ["native"] }
 napi = { version = "2", features = ["async", "serde-json"] }
 napi-derive = "2"
 serde_json = { workspace = true }

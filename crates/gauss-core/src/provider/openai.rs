@@ -22,12 +22,7 @@ pub struct OpenAiProvider {
 
 impl OpenAiProvider {
     pub fn new(model: impl Into<String>, config: ProviderConfig) -> Self {
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_millis(
-                config.timeout_ms.unwrap_or(60_000),
-            ))
-            .build()
-            .expect("Failed to build HTTP client");
+        let client = crate::provider::build_client(config.timeout_ms);
 
         Self {
             config,
@@ -308,7 +303,8 @@ impl OpenAiProvider {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl Provider for OpenAiProvider {
     fn name(&self) -> &str {
         "openai"
@@ -391,7 +387,7 @@ impl Provider for OpenAiProvider {
         messages: &[Message],
         tools: &[Tool],
         options: &GenerateOptions,
-    ) -> error::Result<Box<dyn futures::Stream<Item = error::Result<StreamEvent>> + Send + Unpin>>
+    ) -> error::Result<crate::provider::BoxStream>
     {
         let body = self.build_request_body(messages, tools, options, true);
         let url = format!("{}/chat/completions", self.base_url());

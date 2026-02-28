@@ -8,7 +8,6 @@ use crate::error::{self, GaussError};
 use crate::message::Message;
 use std::collections::HashMap;
 use std::pin::Pin;
-use std::sync::Arc;
 
 /// Result of a workflow step.
 #[derive(Debug, Clone)]
@@ -19,24 +18,42 @@ pub struct StepOutput {
 }
 
 /// Type alias for step input functions.
-pub type StepInputFn = Arc<dyn Fn(&HashMap<String, StepOutput>) -> Vec<Message> + Send + Sync>;
+#[cfg(not(target_arch = "wasm32"))]
+pub type StepInputFn =
+    std::sync::Arc<dyn Fn(&HashMap<String, StepOutput>) -> Vec<Message> + Send + Sync>;
+#[cfg(target_arch = "wasm32")]
+pub type StepInputFn = std::rc::Rc<dyn Fn(&HashMap<String, StepOutput>) -> Vec<Message>>;
 
 /// Type alias for async step execution functions.
-pub type StepExecuteFn = Arc<
+#[cfg(not(target_arch = "wasm32"))]
+pub type StepExecuteFn = std::sync::Arc<
     dyn Fn(
             HashMap<String, StepOutput>,
         ) -> Pin<Box<dyn std::future::Future<Output = error::Result<StepOutput>> + Send>>
         + Send
         + Sync,
 >;
+#[cfg(target_arch = "wasm32")]
+pub type StepExecuteFn = std::rc::Rc<
+    dyn Fn(
+            HashMap<String, StepOutput>,
+        ) -> Pin<Box<dyn std::future::Future<Output = error::Result<StepOutput>>>>
+>;
 
 /// Type alias for router functions.
-pub type StepRouteFn = Arc<dyn Fn(&HashMap<String, StepOutput>) -> String + Send + Sync>;
+#[cfg(not(target_arch = "wasm32"))]
+pub type StepRouteFn =
+    std::sync::Arc<dyn Fn(&HashMap<String, StepOutput>) -> String + Send + Sync>;
+#[cfg(target_arch = "wasm32")]
+pub type StepRouteFn = std::rc::Rc<dyn Fn(&HashMap<String, StepOutput>) -> String>;
 
 /// A single step in a workflow.
 pub enum Step {
     /// Run an agent.
-    Agent { agent: Box<Agent>, input_fn: StepInputFn },
+    Agent {
+        agent: Box<Agent>,
+        input_fn: StepInputFn,
+    },
     /// Run a custom function.
     Function { execute: StepExecuteFn },
     /// Router — pick a branch based on conditions.
@@ -149,6 +166,7 @@ impl WorkflowBuilder {
     }
 
     /// Add an agent step.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn agent_step(
         mut self,
         id: impl Into<String>,
@@ -159,13 +177,31 @@ impl WorkflowBuilder {
             id.into(),
             Step::Agent {
                 agent: Box::new(agent),
-                input_fn: Arc::new(input_fn),
+                input_fn: std::sync::Arc::new(input_fn),
+            },
+        );
+        self
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn agent_step(
+        mut self,
+        id: impl Into<String>,
+        agent: Agent,
+        input_fn: impl Fn(&HashMap<String, StepOutput>) -> Vec<Message> + 'static,
+    ) -> Self {
+        self.steps.insert(
+            id.into(),
+            Step::Agent {
+                agent: Box::new(agent),
+                input_fn: std::rc::Rc::new(input_fn),
             },
         );
         self
     }
 
     /// Add a function step.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn function_step(
         mut self,
         id: impl Into<String>,
@@ -180,7 +216,26 @@ impl WorkflowBuilder {
         self.steps.insert(
             id.into(),
             Step::Function {
-                execute: Arc::new(execute),
+                execute: std::sync::Arc::new(execute),
+            },
+        );
+        self
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn function_step(
+        mut self,
+        id: impl Into<String>,
+        execute: impl Fn(
+            HashMap<String, StepOutput>,
+        )
+            -> Pin<Box<dyn std::future::Future<Output = error::Result<StepOutput>>>>
+        + 'static,
+    ) -> Self {
+        self.steps.insert(
+            id.into(),
+            Step::Function {
+                execute: std::rc::Rc::new(execute),
             },
         );
         self

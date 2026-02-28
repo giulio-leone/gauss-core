@@ -13,6 +13,12 @@ pub mod team;
 pub mod tool;
 pub mod workflow;
 
+/// Platform-aware shared pointer: `Arc` on native, `Rc` on WASM.
+#[cfg(not(target_arch = "wasm32"))]
+pub type Shared<T> = std::sync::Arc<T>;
+#[cfg(target_arch = "wasm32")]
+pub type Shared<T> = std::rc::Rc<T>;
+
 pub use agent::{Agent, AgentBuilder, AgentOutput};
 pub use error::GaussError;
 pub use message::{Content, Message, Role};

@@ -11,7 +11,7 @@ name = "gauss"
 path = "src/main.rs"
 
 [dependencies]
-gauss-core = { workspace = true }
+gauss-core = { workspace = true, features = ["native"] }
 tokio = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 serde_json = { workspace = true }

@@ -6,6 +6,12 @@ use crate::message::{Message, Usage};
 use crate::streaming::StreamEvent;
 use crate::tool::{Tool, ToolChoice};
 
+/// Platform-aware boxed stream type.
+#[cfg(not(target_arch = "wasm32"))]
+pub type BoxStream = Box<dyn futures::Stream<Item = error::Result<StreamEvent>> + Send + Unpin>;
+#[cfg(target_arch = "wasm32")]
+pub type BoxStream = Box<dyn futures::Stream<Item = error::Result<StreamEvent>> + Unpin>;
+
 /// Reasoning effort level.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -108,15 +114,13 @@ pub enum FinishReason {
 }
 
 /// Core trait for AI model providers.
+/// Core trait for AI model providers.
+#[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
 pub trait Provider: Send + Sync {
-    /// Provider name (e.g., "openai", "anthropic", "google").
     fn name(&self) -> &str;
-
-    /// Model identifier (e.g., "gpt-5.2", "claude-sonnet-4-20250514").
     fn model(&self) -> &str;
 
-    /// Generate a complete response.
     async fn generate(
         &self,
         messages: &[Message],
@@ -124,16 +128,49 @@ pub trait Provider: Send + Sync {
         options: &GenerateOptions,
     ) -> error::Result<GenerateResult>;
 
-    /// Generate a streaming response.
     async fn stream(
         &self,
         messages: &[Message],
         tools: &[Tool],
         options: &GenerateOptions,
-    ) -> error::Result<Box<dyn futures::Stream<Item = error::Result<StreamEvent>> + Send + Unpin>>;
+    ) -> error::Result<BoxStream>;
+}
+
+/// Core trait for AI model providers (WASM — no Send + Sync).
+#[cfg(target_arch = "wasm32")]
+#[async_trait(?Send)]
+pub trait Provider {
+    fn name(&self) -> &str;
+    fn model(&self) -> &str;
+
+    async fn generate(
+        &self,
+        messages: &[Message],
+        tools: &[Tool],
+        options: &GenerateOptions,
+    ) -> error::Result<GenerateResult>;
+
+    async fn stream(
+        &self,
+        messages: &[Message],
+        tools: &[Tool],
+        options: &GenerateOptions,
+    ) -> error::Result<BoxStream>;
+}
+
+/// Build an HTTP client with platform-appropriate settings.
+pub fn build_client(timeout_ms: Option<u64>) -> reqwest::Client {
+    let builder = reqwest::Client::builder();
+    #[cfg(not(target_arch = "wasm32"))]
+    let builder = builder.timeout(std::time::Duration::from_millis(timeout_ms.unwrap_or(60_000)));
+    let _ = timeout_ms; // suppress unused warning on wasm
+    builder.build().expect("Failed to build HTTP client")
 }
 
 pub mod anthropic;
+pub mod deepseek;
 pub mod google;
+pub mod groq;
+pub mod ollama;
 pub mod openai;
 pub mod retry;

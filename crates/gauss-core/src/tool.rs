@@ -43,12 +43,20 @@ impl Default for ToolParameters {
 }
 
 /// Type alias for tool execution function.
+#[cfg(not(target_arch = "wasm32"))]
 pub type ToolExecuteFn = Arc<
     dyn Fn(
             serde_json::Value,
         ) -> Pin<Box<dyn Future<Output = error::Result<serde_json::Value>> + Send>>
         + Send
         + Sync,
+>;
+
+#[cfg(target_arch = "wasm32")]
+pub type ToolExecuteFn = std::rc::Rc<
+    dyn Fn(
+            serde_json::Value,
+        ) -> Pin<Box<dyn Future<Output = error::Result<serde_json::Value>>>>
 >;
 
 /// A tool that can be used by an agent.
@@ -117,12 +125,23 @@ impl ToolBuilder {
         self
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn execute<F, Fut>(mut self, f: F) -> Self
     where
         F: Fn(serde_json::Value) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = error::Result<serde_json::Value>> + Send + 'static,
     {
         self.execute = Some(Arc::new(move |args| Box::pin(f(args))));
+        self
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn execute<F, Fut>(mut self, f: F) -> Self
+    where
+        F: Fn(serde_json::Value) -> Fut + 'static,
+        Fut: Future<Output = error::Result<serde_json::Value>> + 'static,
+    {
+        self.execute = Some(std::rc::Rc::new(move |args| Box::pin(f(args))));
         self
     }
 

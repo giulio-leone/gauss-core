@@ -4,7 +4,10 @@ extern crate napi_derive;
 use gauss_core::agent::{Agent as RustAgent, AgentOutput as RustAgentOutput, StopCondition};
 use gauss_core::message::Message as RustMessage;
 use gauss_core::provider::anthropic::AnthropicProvider;
+use gauss_core::provider::deepseek::DeepSeekProvider;
 use gauss_core::provider::google::GoogleProvider;
+use gauss_core::provider::groq::GroqProvider;
+use gauss_core::provider::ollama::OllamaProvider;
 use gauss_core::provider::openai::OpenAiProvider;
 use gauss_core::provider::retry::{RetryConfig, RetryProvider};
 use gauss_core::provider::{GenerateOptions, Provider, ProviderConfig};
@@ -42,7 +45,7 @@ pub struct ProviderOptions {
 }
 
 /// Creates a provider and returns its handle ID.
-/// Supported: "openai", "anthropic", "google"
+/// Supported: "openai", "anthropic", "google", "groq", "ollama", "deepseek"
 #[napi]
 pub fn create_provider(
     provider_type: String,
@@ -67,6 +70,9 @@ pub fn create_provider(
         "openai" => Arc::new(OpenAiProvider::new(model, config)),
         "anthropic" => Arc::new(AnthropicProvider::new(model, config)),
         "google" => Arc::new(GoogleProvider::new(model, config)),
+        "groq" => Arc::new(GroqProvider::create(model, config)),
+        "ollama" => Arc::new(OllamaProvider::create(model, config)),
+        "deepseek" => Arc::new(DeepSeekProvider::create(model, config)),
         other => {
             return Err(napi::Error::from_reason(format!(
                 "Unknown provider type: {other}"

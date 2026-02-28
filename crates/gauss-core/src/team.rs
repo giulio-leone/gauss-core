@@ -74,6 +74,7 @@ impl Team {
         })
     }
 
+    #[cfg(feature = "native")]
     async fn run_parallel(&self, messages: Vec<Message>) -> error::Result<TeamOutput> {
         if self.agents.is_empty() {
             return Err(GaussError::Agent {
@@ -115,6 +116,12 @@ impl Team {
             results,
             final_text,
         })
+    }
+
+    #[cfg(not(feature = "native"))]
+    async fn run_parallel(&self, messages: Vec<Message>) -> error::Result<TeamOutput> {
+        // Without tokio, fall back to sequential execution
+        self.run_sequential(messages).await
     }
 }
 

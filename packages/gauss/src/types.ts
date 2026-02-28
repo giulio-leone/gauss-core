@@ -1,5 +1,5 @@
 /** Supported provider types. */
-export type ProviderType = 'openai' | 'anthropic' | 'google';
+export type ProviderType = 'openai' | 'anthropic' | 'google' | 'groq' | 'ollama' | 'deepseek';
 
 /** Provider configuration. */
 export interface ProviderOptions {

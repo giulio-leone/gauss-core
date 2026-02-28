@@ -16,7 +16,7 @@ license = "MIT"
 repository = "https://github.com/giulio-leone/gauss-core"
 
 [workspace.dependencies]
-gauss-core = { path = "crates/gauss-core" }
+gauss-core = { path = "crates/gauss-core", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
@@ -27,7 +27,7 @@ async-trait = "0.1"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 uuid = { version = "1", features = ["v4"] }
-jsonschema = "0.30"
+jsonschema = { version = "0.30", default-features = false }
 async-stream = "0.3"
 
 [profile.release]

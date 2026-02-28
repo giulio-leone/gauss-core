@@ -1,7 +1,10 @@
 use clap::Parser;
 use gauss_core::message::Message;
 use gauss_core::provider::anthropic::AnthropicProvider;
+use gauss_core::provider::deepseek::DeepSeekProvider;
 use gauss_core::provider::google::GoogleProvider;
+use gauss_core::provider::groq::GroqProvider;
+use gauss_core::provider::ollama::OllamaProvider;
 use gauss_core::provider::openai::OpenAiProvider;
 use gauss_core::provider::retry::{RetryConfig, RetryProvider};
 use gauss_core::provider::{GenerateOptions, Provider, ProviderConfig};
@@ -43,11 +46,17 @@ fn build_provider(provider_type: &str, model: &str) -> Result<Arc<dyn Provider>,
         "openai" => "OPENAI_API_KEY",
         "anthropic" => "ANTHROPIC_API_KEY",
         "google" => "GOOGLE_API_KEY",
+        "groq" => "GROQ_API_KEY",
+        "ollama" => "OLLAMA_API_KEY",
+        "deepseek" => "DEEPSEEK_API_KEY",
         other => return Err(format!("Unknown provider: {other}")),
     };
 
-    let api_key = std::env::var(api_key_env)
-        .map_err(|_| format!("Set {api_key_env} environment variable"))?;
+    let api_key = if provider_type == "ollama" {
+        std::env::var(api_key_env).unwrap_or_else(|_| "ollama".to_string())
+    } else {
+        std::env::var(api_key_env).map_err(|_| format!("Set {api_key_env} environment variable"))?
+    };
 
     let config = ProviderConfig::new(&api_key);
 
@@ -55,6 +64,9 @@ fn build_provider(provider_type: &str, model: &str) -> Result<Arc<dyn Provider>,
         "openai" => Arc::new(OpenAiProvider::new(model, config)),
         "anthropic" => Arc::new(AnthropicProvider::new(model, config)),
         "google" => Arc::new(GoogleProvider::new(model, config)),
+        "groq" => Arc::new(GroqProvider::create(model, config)),
+        "ollama" => Arc::new(OllamaProvider::create(model, config)),
+        "deepseek" => Arc::new(DeepSeekProvider::create(model, config)),
         _ => unreachable!(),
     };
 
@@ -80,6 +92,9 @@ async fn main() {
             println!("  openai     — OpenAI (GPT-4o, GPT-5.2, etc.) [OPENAI_API_KEY]");
             println!("  anthropic  — Anthropic (Claude 4, etc.) [ANTHROPIC_API_KEY]");
             println!("  google     — Google (Gemini 2.5, etc.) [GOOGLE_API_KEY]");
+            println!("  groq       — Groq (Llama 3.3 70B, Mixtral, etc.) [GROQ_API_KEY]");
+            println!("  ollama     — Ollama (local, no API key needed)");
+            println!("  deepseek   — DeepSeek (Chat, Coder, Reasoner) [DEEPSEEK_API_KEY]");
         }
         Commands::Chat {
             provider,

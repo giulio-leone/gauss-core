@@ -1,19 +1,22 @@
 use gauss_core::agent::{Agent as RustAgent, StopCondition};
 use gauss_core::message::Message as RustMessage;
 use gauss_core::provider::anthropic::AnthropicProvider;
+use gauss_core::provider::deepseek::DeepSeekProvider;
 use gauss_core::provider::google::GoogleProvider;
+use gauss_core::provider::groq::GroqProvider;
+use gauss_core::provider::ollama::OllamaProvider;
 use gauss_core::provider::openai::OpenAiProvider;
 use gauss_core::provider::retry::{RetryConfig, RetryProvider};
 use gauss_core::provider::{GenerateOptions, Provider, ProviderConfig};
 use serde_json::json;
+use std::cell::RefCell;
+use gauss_core::Shared;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
 use wasm_bindgen::prelude::*;
 
-fn providers() -> &'static Mutex<HashMap<u32, Arc<dyn Provider>>> {
-    static PROVIDERS: OnceLock<Mutex<HashMap<u32, Arc<dyn Provider>>>> = OnceLock::new();
-    PROVIDERS.get_or_init(|| Mutex::new(HashMap::new()))
+thread_local! {
+    static PROVIDERS: RefCell<HashMap<u32, Shared<dyn Provider>>> = RefCell::new(HashMap::new());
 }
 
 static NEXT_ID: AtomicU32 = AtomicU32::new(1);
@@ -37,14 +40,17 @@ pub fn create_provider(
         config.base_url = Some(url);
     }
 
-    let inner: Arc<dyn Provider> = match provider_type {
-        "openai" => Arc::new(OpenAiProvider::new(model, config)),
-        "anthropic" => Arc::new(AnthropicProvider::new(model, config)),
-        "google" => Arc::new(GoogleProvider::new(model, config)),
+    let inner: Shared<dyn Provider> = match provider_type {
+        "openai" => Shared::new(OpenAiProvider::new(model, config)),
+        "anthropic" => Shared::new(AnthropicProvider::new(model, config)),
+        "google" => Shared::new(GoogleProvider::new(model, config)),
+        "groq" => Shared::new(GroqProvider::create(model, config)),
+        "ollama" => Shared::new(OllamaProvider::create(model, config)),
+        "deepseek" => Shared::new(DeepSeekProvider::create(model, config)),
         other => return Err(JsValue::from_str(&format!("Unknown provider: {other}"))),
     };
 
-    let provider: Arc<dyn Provider> = Arc::new(RetryProvider::new(
+    let provider: Shared<dyn Provider> = Shared::new(RetryProvider::new(
         inner,
         RetryConfig {
             max_retries: 3,
@@ -53,28 +59,28 @@ pub fn create_provider(
     ));
 
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    providers().lock().unwrap().insert(id, provider);
+    PROVIDERS.with(|p| p.borrow_mut().insert(id, provider));
     Ok(id)
 }
 
 /// Destroys a provider.
 #[wasm_bindgen(js_name = "destroyProvider")]
 pub fn destroy_provider(handle: u32) -> Result<(), JsValue> {
-    providers()
-        .lock()
-        .unwrap()
-        .remove(&handle)
-        .ok_or_else(|| JsValue::from_str(&format!("Provider {handle} not found")))?;
+    PROVIDERS.with(|p| {
+        p.borrow_mut()
+            .remove(&handle)
+            .ok_or_else(|| JsValue::from_str(&format!("Provider {handle} not found")))
+    })?;
     Ok(())
 }
 
-fn get_provider(handle: u32) -> Result<Arc<dyn Provider>, JsValue> {
-    providers()
-        .lock()
-        .unwrap()
-        .get(&handle)
-        .cloned()
-        .ok_or_else(|| JsValue::from_str(&format!("Provider {handle} not found")))
+fn get_provider(handle: u32) -> Result<Shared<dyn Provider>, JsValue> {
+    PROVIDERS.with(|p| {
+        p.borrow()
+            .get(&handle)
+            .cloned()
+            .ok_or_else(|| JsValue::from_str(&format!("Provider {handle} not found")))
+    })
 }
 
 fn parse_messages(json_str: &str) -> Result<Vec<RustMessage>, JsValue> {
