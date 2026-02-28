@@ -8,8 +8,8 @@ fn test_span_builder() {
 
     assert_eq!(span.name, "agent_run");
     assert!(matches!(span.span_type, SpanType::AgentRun));
-    assert!(span.start_ms > 0);
-    assert!(span.duration_ms > 0 || span.duration_ms == 0); // very fast
+    assert_eq!(span.start_ms, 0); // relative to run start
+    assert!(span.duration_ms == 0 || span.duration_ms > 0); // very fast
 }
 
 #[test]
