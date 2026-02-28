@@ -79,6 +79,22 @@ pub struct Agent {
     on_tool_call: Option<OnToolCallFn>,
 }
 
+impl Clone for Agent {
+    fn clone(&self) -> Self {
+        Self {
+            name: self.name.clone(),
+            provider: self.provider.clone(),
+            instructions: self.instructions.clone(),
+            tools: self.tools.clone(),
+            options: self.options.clone(),
+            max_steps: self.max_steps,
+            stop_conditions: self.stop_conditions.clone(),
+            on_step_finish: self.on_step_finish.clone(),
+            on_tool_call: self.on_tool_call.clone(),
+        }
+    }
+}
+
 impl Agent {
     pub fn builder(name: impl Into<String>, provider: Arc<dyn Provider>) -> AgentBuilder {
         AgentBuilder {
