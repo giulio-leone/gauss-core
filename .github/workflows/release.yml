@@ -18,6 +18,11 @@ jobs:
             os: ubuntu-latest
             binary: gauss
             artifact: gauss-cli-linux-x86_64
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            binary: gauss
+            artifact: gauss-cli-linux-aarch64
+            cross: true
           - target: aarch64-apple-darwin
             os: macos-latest
             binary: gauss
@@ -26,13 +31,25 @@ jobs:
             os: macos-13
             binary: gauss
             artifact: gauss-cli-macos-x86_64
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            binary: gauss.exe
+            artifact: gauss-cli-windows-x86_64.exe
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release -p gauss-cli --target ${{ matrix.target }}
+      - name: Install cross
+        if: matrix.cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+      - name: Build (native)
+        if: "!matrix.cross"
+        run: cargo build --release -p gauss-cli --target ${{ matrix.target }}
+      - name: Build (cross)
+        if: matrix.cross
+        run: cross build --release -p gauss-cli --target ${{ matrix.target }}
       - run: cp target/${{ matrix.target }}/release/${{ matrix.binary }} ${{ matrix.artifact }}
       - uses: actions/upload-artifact@v4
         with:
@@ -47,7 +64,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
-      - run: chmod +x gauss-cli-*
+      - run: chmod +x gauss-cli-linux-* gauss-cli-macos-* || true
       - uses: softprops/action-gh-release@v2
         with:
           files: gauss-cli-*

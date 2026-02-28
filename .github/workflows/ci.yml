@@ -20,8 +20,11 @@ jobs:
       - run: cargo check --workspace --exclude gauss-python
 
   test:
-    name: Test
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -39,6 +42,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --exclude gauss-python -- -D warnings
 
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
   wasm:
     name: WASM Check
     runs-on: ubuntu-latest
@@ -50,12 +63,37 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo check -p gauss-wasm --target wasm32-unknown-unknown
 
-  fmt:
-    name: Format
+  napi-build:
+    name: NAPI Build Check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
         with:
-          components: rustfmt
-      - run: cargo fmt --all -- --check
+          node-version: 22
+      - run: npm install
+      - run: npm run build
+
+  python-test:
+    name: Python Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install maturin
+        run: pip install maturin
+      - name: Build Python wheel
+        working-directory: packages/gauss-py
+        run: maturin develop
+      - name: Install test deps
+        working-directory: packages/gauss-py
+        run: pip install pytest pytest-asyncio
+      - name: Run tests
+        working-directory: packages/gauss-py
+        run: python -m pytest tests/ -v
