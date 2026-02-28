@@ -11,6 +11,9 @@ use gauss_core::provider::{GenerateOptions, Provider, ProviderConfig};
 use std::io::{self, BufRead, Write};
 use std::sync::Arc;
 
+mod config;
+mod init;
+
 #[derive(Parser)]
 #[command(name = "gauss", about = "Gauss — AI Agent Engine")]
 struct Cli {
@@ -39,6 +42,23 @@ enum Commands {
     },
     /// List available providers
     Providers,
+    /// Initialize a new Gauss project
+    Init {
+        /// Project name (also used as directory name)
+        name: String,
+        /// Template to use
+        #[arg(short, long, default_value = "basic")]
+        template: String,
+    },
+    /// Run an agent from a config file
+    Run {
+        /// Path to agent config (YAML or TOML). Defaults to gauss.yaml/gauss.toml
+        #[arg(short, long)]
+        config: Option<String>,
+        /// Prompt to send to the agent
+        #[arg(trailing_var_arg = true)]
+        prompt: Vec<String>,
+    },
 }
 
 fn build_provider(provider_type: &str, model: &str) -> Result<Arc<dyn Provider>, String> {
@@ -102,66 +122,80 @@ async fn main() {
             system,
             prompt,
         } => {
-            let p = match build_provider(&provider, &model) {
-                Ok(p) => p,
-                Err(e) => {
-                    eprintln!("Error: {e}");
-                    std::process::exit(1);
-                }
-            };
+            run_chat(provider, model, system, prompt).await;
+        }
+        Commands::Init { name, template } => {
+            if let Err(e) = init::scaffold_project(&name, &template) {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Commands::Run { config, prompt } => {
+            if let Err(e) = config::run_from_config(config.as_deref(), &prompt).await {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+}
 
-            let opts = GenerateOptions::default();
-            let mut history: Vec<Message> = Vec::new();
+async fn run_chat(provider: String, model: String, system: Option<String>, prompt: Vec<String>) {
+    let p = match build_provider(&provider, &model) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
+        }
+    };
 
-            if let Some(ref sys) = system {
-                history.push(Message::system(sys));
+    let opts = GenerateOptions::default();
+    let mut history: Vec<Message> = Vec::new();
+
+    if let Some(ref sys) = system {
+        history.push(Message::system(sys));
+    }
+
+    if !prompt.is_empty() {
+        let text = prompt.join(" ");
+        history.push(Message::user(&text));
+        match p.generate(&history, &[], &opts).await {
+            Ok(result) => {
+                println!("{}", result.text().unwrap_or(""));
+            }
+            Err(e) => {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        }
+    } else {
+        println!("gauss chat — {provider}/{model}");
+        println!("Type 'exit' to quit.\n");
+
+        let stdin = io::stdin();
+        loop {
+            print!("you> ");
+            io::stdout().flush().ok();
+
+            let mut line = String::new();
+            if stdin.lock().read_line(&mut line).is_err() || line.trim() == "exit" {
+                break;
             }
 
-            if !prompt.is_empty() {
-                // Single-shot mode
-                let text = prompt.join(" ");
-                history.push(Message::user(&text));
-                match p.generate(&history, &[], &opts).await {
-                    Ok(result) => {
-                        println!("{}", result.text().unwrap_or(""));
-                    }
-                    Err(e) => {
-                        eprintln!("Error: {e}");
-                        std::process::exit(1);
-                    }
+            let text = line.trim().to_string();
+            if text.is_empty() {
+                continue;
+            }
+
+            history.push(Message::user(&text));
+
+            match p.generate(&history, &[], &opts).await {
+                Ok(result) => {
+                    let reply = result.text().unwrap_or("").to_string();
+                    println!("\nassistant> {reply}\n");
+                    history.push(Message::assistant(&reply));
                 }
-            } else {
-                // Interactive REPL
-                println!("gauss chat — {provider}/{model}");
-                println!("Type 'exit' to quit.\n");
-
-                let stdin = io::stdin();
-                loop {
-                    print!("you> ");
-                    io::stdout().flush().ok();
-
-                    let mut line = String::new();
-                    if stdin.lock().read_line(&mut line).is_err() || line.trim() == "exit" {
-                        break;
-                    }
-
-                    let text = line.trim().to_string();
-                    if text.is_empty() {
-                        continue;
-                    }
-
-                    history.push(Message::user(&text));
-
-                    match p.generate(&history, &[], &opts).await {
-                        Ok(result) => {
-                            let reply = result.text().unwrap_or("").to_string();
-                            println!("\nassistant> {reply}\n");
-                            history.push(Message::assistant(&reply));
-                        }
-                        Err(e) => {
-                            eprintln!("Error: {e}\n");
-                        }
-                    }
+                Err(e) => {
+                    eprintln!("Error: {e}\n");
                 }
             }
         }
