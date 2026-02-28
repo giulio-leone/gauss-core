@@ -88,19 +88,36 @@ gauss chat -p anthropic -m claude-sonnet-4-20250514 "Explain quantum computing"
 
 # List providers
 gauss providers
+
+# Scaffold a new project
+gauss init my-agent --template basic    # basic | rag | multi-agent
+
+# Run an agent from config
+cd my-agent
+gauss run                               # reads gauss.yaml
+gauss run "What is the meaning of life?"
 ```
 
 ## Features
 
-- **Multi-provider**: OpenAI, Anthropic, Google with automatic retry
+- **Multi-provider**: OpenAI, Anthropic, Google, Groq, Ollama, DeepSeek with automatic retry
 - **Agent loop**: Tool calling with stop conditions (MaxSteps, HasToolCall, TextGenerated)
 - **Streaming**: SSE-based token streaming with AgentStreamEvent
 - **Structured output**: JSON Schema validation via jsonschema
 - **Callbacks**: on_step_finish, on_tool_call hooks
 - **Workflow**: DAG-based multi-step pipelines with dependency tracking
 - **Team**: Multi-agent coordination (Sequential + Parallel strategies)
+- **Memory**: Conversation, Working, Semantic memory with pluggable backends
+- **RAG**: Embedding trait, text splitting, vector store, retrieval pipeline
+- **MCP**: Model Context Protocol — client & server, JSON-RPC, tool adapters
+- **Agent Network**: A2A protocol, routing, delegation, supervisor/worker topology
+- **Middleware**: Before/after hooks with priority ordering, logging, caching
+- **Context Management**: Token counting, pruning strategies, sliding window
+- **Human-in-the-Loop**: Approval gates, checkpoints, suspend/resume
+- **Evaluation**: Scorer trait, built-in scorers, dataset loading, batch runner
+- **Observability**: Span tracing, agent metrics, telemetry collector
+- **CLI**: `gauss init`, `gauss run`, `gauss chat`, project templates
 - **4 targets**: Native (NAPI), Browser (WASM), Python (PyO3), CLI
-- **TypeScript SDK**: Auto-detects NAPI → WASM backend
 
 ## Multi-Agent Team
 
@@ -131,6 +148,41 @@ let workflow = Workflow::builder()
     .build();
 
 let results = workflow.run(messages).await?;
+```
+
+## Memory
+
+```rust
+use gauss_core::memory::{InMemoryMemory, Memory, MemoryEntry, MemoryTier, RecallOptions};
+
+let mem = InMemoryMemory::new();
+let entry = MemoryEntry::new(MemoryTier::Short, serde_json::json!("User prefers Rust"));
+mem.store("session-1", entry).await?;
+
+let results = mem.recall("session-1", &RecallOptions::default()).await?;
+```
+
+## RAG Pipeline
+
+```rust
+use gauss_core::rag::{InMemoryVectorStore, TextSplitter, SplitterConfig, RagPipeline};
+
+let splitter = TextSplitter::new(SplitterConfig { chunk_size: 512, ..Default::default() });
+let store = InMemoryVectorStore::new();
+// Split documents, embed, store, then search
+```
+
+## Agent Network
+
+```rust
+use gauss_core::network::AgentNetwork;
+
+let mut network = AgentNetwork::new();
+network.add_agent(researcher);
+network.add_agent(writer);
+network.set_supervisor(coordinator);
+
+let result = network.delegate("researcher", "Find info on quantum computing").await?;
 ```
 
 ## Building
