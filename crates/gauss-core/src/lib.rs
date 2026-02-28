@@ -10,6 +10,7 @@ pub mod config;
 pub mod context;
 pub mod error;
 pub mod eval;
+pub mod graph;
 pub mod guardrail;
 pub mod hitl;
 pub mod mcp;
@@ -37,6 +38,7 @@ pub type Shared<T> = std::rc::Rc<T>;
 
 pub use agent::{Agent, AgentBuilder, AgentOutput};
 pub use error::GaussError;
+pub use graph::{ConsensusStrategy, Graph, GraphBuilder, GraphResult};
 pub use message::{Content, Message, Role};
 pub use provider::{GenerateOptions, Provider, ProviderConfig};
 pub use streaming::StreamEvent;
