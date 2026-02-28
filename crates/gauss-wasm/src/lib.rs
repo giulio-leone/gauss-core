@@ -1,3 +1,7 @@
+// WASM crate: Shared = Rc on wasm32, Arc on native. RefCell is fine for single-threaded WASM.
+#![allow(clippy::arc_with_non_send_sync)]
+#![allow(clippy::await_holding_refcell_ref)]
+
 use gauss_core::Shared;
 use gauss_core::agent::{Agent as RustAgent, StopCondition};
 use gauss_core::context;
@@ -19,7 +23,6 @@ use gauss_core::telemetry;
 use serde_json::json;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use wasm_bindgen::prelude::*;
 
@@ -205,13 +208,13 @@ pub async fn agent_run(
 // ============ WASM Registries ============
 
 thread_local! {
-    static MEMORIES: RefCell<HashMap<u32, Rc<memory::InMemoryMemory>>> = RefCell::new(HashMap::new());
-    static VECTOR_STORES: RefCell<HashMap<u32, Rc<rag::InMemoryVectorStore>>> = RefCell::new(HashMap::new());
-    static MCP_SERVERS: RefCell<HashMap<u32, Rc<RefCell<mcp::McpServer>>>> = RefCell::new(HashMap::new());
-    static APPROVALS: RefCell<HashMap<u32, Rc<RefCell<hitl::ApprovalManager>>>> = RefCell::new(HashMap::new());
-    static CHECKPOINTS: RefCell<HashMap<u32, Rc<hitl::InMemoryCheckpointStore>>> = RefCell::new(HashMap::new());
-    static EVALS: RefCell<HashMap<u32, Rc<RefCell<eval::EvalRunner>>>> = RefCell::new(HashMap::new());
-    static COLLECTORS: RefCell<HashMap<u32, Rc<RefCell<telemetry::TelemetryCollector>>>> = RefCell::new(HashMap::new());
+    static MEMORIES: RefCell<HashMap<u32, Shared<memory::InMemoryMemory>>> = RefCell::new(HashMap::new());
+    static VECTOR_STORES: RefCell<HashMap<u32, Shared<rag::InMemoryVectorStore>>> = RefCell::new(HashMap::new());
+    static MCP_SERVERS: RefCell<HashMap<u32, Shared<RefCell<mcp::McpServer>>>> = RefCell::new(HashMap::new());
+    static APPROVALS: RefCell<HashMap<u32, Shared<RefCell<hitl::ApprovalManager>>>> = RefCell::new(HashMap::new());
+    static CHECKPOINTS: RefCell<HashMap<u32, Shared<hitl::InMemoryCheckpointStore>>> = RefCell::new(HashMap::new());
+    static EVALS: RefCell<HashMap<u32, Shared<RefCell<eval::EvalRunner>>>> = RefCell::new(HashMap::new());
+    static COLLECTORS: RefCell<HashMap<u32, Shared<RefCell<telemetry::TelemetryCollector>>>> = RefCell::new(HashMap::new());
 }
 
 fn next_handle() -> u32 {
@@ -229,7 +232,7 @@ pub fn create_memory() -> u32 {
     let id = next_handle();
     MEMORIES.with(|m| {
         m.borrow_mut()
-            .insert(id, Rc::new(memory::InMemoryMemory::new()))
+            .insert(id, Shared::new(memory::InMemoryMemory::new()))
     });
     id
 }
@@ -302,7 +305,7 @@ pub fn create_vector_store() -> u32 {
     let id = next_handle();
     VECTOR_STORES.with(|v| {
         v.borrow_mut()
-            .insert(id, Rc::new(rag::InMemoryVectorStore::new()))
+            .insert(id, Shared::new(rag::InMemoryVectorStore::new()))
     });
     id
 }
@@ -360,7 +363,7 @@ pub fn create_mcp_server(name: &str, version_str: &str) -> u32 {
     MCP_SERVERS.with(|s| {
         s.borrow_mut().insert(
             id,
-            Rc::new(RefCell::new(mcp::McpServer::new(name, version_str))),
+            Shared::new(RefCell::new(mcp::McpServer::new(name, version_str))),
         )
     });
     id
@@ -408,7 +411,7 @@ pub fn create_approval_manager() -> u32 {
     let id = next_handle();
     APPROVALS.with(|a| {
         a.borrow_mut()
-            .insert(id, Rc::new(RefCell::new(hitl::ApprovalManager::new())))
+            .insert(id, Shared::new(RefCell::new(hitl::ApprovalManager::new())))
     });
     id
 }
@@ -489,7 +492,7 @@ pub fn create_checkpoint_store() -> u32 {
     let id = next_handle();
     CHECKPOINTS.with(|c| {
         c.borrow_mut()
-            .insert(id, Rc::new(hitl::InMemoryCheckpointStore::new()))
+            .insert(id, Shared::new(hitl::InMemoryCheckpointStore::new()))
     });
     id
 }
@@ -535,7 +538,7 @@ pub fn create_eval_runner(threshold: Option<f64>) -> u32 {
     if let Some(t) = threshold {
         runner = runner.with_threshold(t);
     }
-    EVALS.with(|e| e.borrow_mut().insert(id, Rc::new(RefCell::new(runner))));
+    EVALS.with(|e| e.borrow_mut().insert(id, Shared::new(RefCell::new(runner))));
     id
 }
 
@@ -544,10 +547,10 @@ pub fn eval_add_scorer(handle: u32, scorer_type: &str) -> Result<(), JsValue> {
     let runner = EVALS
         .with(|e| e.borrow().get(&handle).cloned())
         .ok_or_else(|| err("EvalRunner not found"))?;
-    let scorer: Rc<dyn eval::Scorer> = match scorer_type {
-        "exact_match" => Rc::new(eval::ExactMatchScorer),
-        "contains" => Rc::new(eval::ContainsScorer),
-        "length_ratio" => Rc::new(eval::LengthRatioScorer),
+    let scorer: Shared<dyn eval::Scorer> = match scorer_type {
+        "exact_match" => Shared::new(eval::ExactMatchScorer),
+        "contains" => Shared::new(eval::ContainsScorer),
+        "length_ratio" => Shared::new(eval::LengthRatioScorer),
         other => return Err(err(&format!("Unknown scorer: {other}"))),
     };
     runner.borrow_mut().add_scorer(scorer);
@@ -582,7 +585,7 @@ pub fn create_telemetry() -> u32 {
     COLLECTORS.with(|c| {
         c.borrow_mut().insert(
             id,
-            Rc::new(RefCell::new(telemetry::TelemetryCollector::new())),
+            Shared::new(RefCell::new(telemetry::TelemetryCollector::new())),
         )
     });
     id
@@ -667,7 +670,7 @@ pub fn plugin_registry_add_telemetry(handle: u32) -> Result<(), JsValue> {
         let registry = reg
             .get_mut(&handle)
             .ok_or_else(|| err("PluginRegistry not found"))?;
-        registry.register(Rc::new(plugin::TelemetryPlugin));
+        registry.register(Shared::new(plugin::TelemetryPlugin));
         Ok(())
     })
 }
@@ -679,7 +682,7 @@ pub fn plugin_registry_add_memory(handle: u32) -> Result<(), JsValue> {
         let registry = reg
             .get_mut(&handle)
             .ok_or_else(|| err("PluginRegistry not found"))?;
-        registry.register(Rc::new(plugin::MemoryPlugin));
+        registry.register(Shared::new(plugin::MemoryPlugin));
         Ok(())
     })
 }
