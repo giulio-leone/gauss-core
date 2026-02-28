@@ -85,7 +85,7 @@ fn create_provider(
     };
 
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    providers().lock().unwrap().insert(id, provider);
+    providers().lock().expect("registry mutex poisoned").insert(id, provider);
     Ok(id)
 }
 
@@ -509,7 +509,7 @@ fn cosine_similarity(a_json: &str, b_json: &str) -> PyResult<f64> {
 #[pyfunction]
 fn create_mcp_server(name: &str, version_str: &str) -> u32 {
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    mcp_servers().lock().unwrap().insert(
+    mcp_servers().lock().expect("registry mutex poisoned").insert(
         id,
         Arc::new(tokio::sync::Mutex::new(mcp::McpServer::new(
             name,
@@ -572,7 +572,7 @@ fn destroy_mcp_server(handle: u32) -> PyResult<()> {
 #[pyfunction]
 fn create_network() -> u32 {
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    networks().lock().unwrap().insert(
+    networks().lock().expect("registry mutex poisoned").insert(
         id,
         Arc::new(tokio::sync::Mutex::new(network::AgentNetwork::new())),
     );
@@ -737,7 +737,7 @@ fn approval_list_pending(handle: u32) -> PyResult<String> {
         .get(&handle)
         .cloned()
         .ok_or_else(|| py_err("ApprovalManager not found"))?;
-    let pending = mgr.lock().unwrap().list_pending().map_err(py_err)?;
+    let pending = mgr.lock().expect("registry mutex poisoned").list_pending().map_err(py_err)?;
     serde_json::to_string(&pending).map_err(py_err)
 }
 
@@ -842,7 +842,7 @@ fn eval_add_scorer(handle: u32, scorer_type: &str) -> PyResult<()> {
         "length_ratio" => Arc::new(eval::LengthRatioScorer),
         other => return Err(py_err(format!("Unknown scorer: {other}"))),
     };
-    runner.lock().unwrap().add_scorer(scorer);
+    runner.lock().expect("registry mutex poisoned").add_scorer(scorer);
     Ok(())
 }
 
@@ -873,7 +873,7 @@ fn destroy_eval_runner(handle: u32) -> PyResult<()> {
 #[pyfunction]
 fn create_telemetry() -> u32 {
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    collectors().lock().unwrap().insert(
+    collectors().lock().expect("registry mutex poisoned").insert(
         id,
         Arc::new(Mutex::new(telemetry::TelemetryCollector::new())),
     );
@@ -889,7 +889,7 @@ fn telemetry_record_span(handle: u32, span_json: &str) -> PyResult<()> {
         .cloned()
         .ok_or_else(|| py_err("TelemetryCollector not found"))?;
     let span: telemetry::SpanRecord = serde_json::from_str(span_json).map_err(py_err)?;
-    coll.lock().unwrap().record_span(span);
+    coll.lock().expect("registry mutex poisoned").record_span(span);
     Ok(())
 }
 
@@ -901,7 +901,7 @@ fn telemetry_export_spans(handle: u32) -> PyResult<String> {
         .get(&handle)
         .cloned()
         .ok_or_else(|| py_err("TelemetryCollector not found"))?;
-    let spans = coll.lock().unwrap().export_spans();
+    let spans = coll.lock().expect("registry mutex poisoned").export_spans();
     serde_json::to_string(&spans).map_err(py_err)
 }
 
@@ -913,7 +913,7 @@ fn telemetry_export_metrics(handle: u32) -> PyResult<String> {
         .get(&handle)
         .cloned()
         .ok_or_else(|| py_err("TelemetryCollector not found"))?;
-    let metrics = coll.lock().unwrap().export_metrics();
+    let metrics = coll.lock().expect("registry mutex poisoned").export_metrics();
     serde_json::to_string(&metrics).map_err(py_err)
 }
 
@@ -925,7 +925,7 @@ fn telemetry_clear(handle: u32) -> PyResult<()> {
         .get(&handle)
         .cloned()
         .ok_or_else(|| py_err("TelemetryCollector not found"))?;
-    coll.lock().unwrap().clear();
+    coll.lock().expect("registry mutex poisoned").clear();
     Ok(())
 }
 
@@ -963,7 +963,7 @@ fn guardrail_chain_add_content_moderation(
     block_patterns: Vec<String>,
     warn_patterns: Vec<String>,
 ) -> PyResult<()> {
-    let mut reg = guardrail_chains().lock().unwrap();
+    let mut reg = guardrail_chains().lock().expect("registry mutex poisoned");
     let chain = reg
         .get_mut(&handle)
         .ok_or_else(|| py_err("GuardrailChain not found"))?;
@@ -986,7 +986,7 @@ fn guardrail_chain_add_pii_detection(handle: u32, action: String) -> PyResult<()
         "redact" => guardrail::PiiAction::Redact,
         _ => return Err(py_err("Invalid PII action: block|warn|redact")),
     };
-    let mut reg = guardrail_chains().lock().unwrap();
+    let mut reg = guardrail_chains().lock().expect("registry mutex poisoned");
     let chain = reg
         .get_mut(&handle)
         .ok_or_else(|| py_err("GuardrailChain not found"))?;
@@ -1008,7 +1008,7 @@ fn guardrail_chain_add_token_limit(
     if let Some(m) = max_output {
         g = g.max_output(m as usize);
     }
-    let mut reg = guardrail_chains().lock().unwrap();
+    let mut reg = guardrail_chains().lock().expect("registry mutex poisoned");
     let chain = reg
         .get_mut(&handle)
         .ok_or_else(|| py_err("GuardrailChain not found"))?;
@@ -1029,7 +1029,7 @@ fn guardrail_chain_add_regex_filter(
     for r in warn_rules {
         g = g.warn(&r, format!("Warning by regex: {r}"));
     }
-    let mut reg = guardrail_chains().lock().unwrap();
+    let mut reg = guardrail_chains().lock().expect("registry mutex poisoned");
     let chain = reg
         .get_mut(&handle)
         .ok_or_else(|| py_err("GuardrailChain not found"))?;
@@ -1041,7 +1041,7 @@ fn guardrail_chain_add_regex_filter(
 fn guardrail_chain_add_schema(handle: u32, schema_json: String) -> PyResult<()> {
     let schema: serde_json::Value = serde_json::from_str(&schema_json)
         .map_err(|e| py_err(format!("Invalid JSON schema: {e}")))?;
-    let mut reg = guardrail_chains().lock().unwrap();
+    let mut reg = guardrail_chains().lock().expect("registry mutex poisoned");
     let chain = reg
         .get_mut(&handle)
         .ok_or_else(|| py_err("GuardrailChain not found"))?;
@@ -1051,7 +1051,7 @@ fn guardrail_chain_add_schema(handle: u32, schema_json: String) -> PyResult<()> 
 
 #[pyfunction]
 fn guardrail_chain_list(handle: u32) -> PyResult<Vec<String>> {
-    let reg = guardrail_chains().lock().unwrap();
+    let reg = guardrail_chains().lock().expect("registry mutex poisoned");
     let chain = reg
         .get(&handle)
         .ok_or_else(|| py_err("GuardrailChain not found"))?;
@@ -1072,7 +1072,7 @@ fn destroy_guardrail_chain(handle: u32) -> PyResult<()> {
 
 #[pyfunction]
 fn create_fallback_provider(provider_handles: Vec<u32>) -> PyResult<u32> {
-    let prov_reg = providers().lock().unwrap();
+    let prov_reg = providers().lock().expect("registry mutex poisoned");
     let mut providers_vec: Vec<Arc<dyn Provider>> = Vec::new();
     for h in provider_handles {
         let p = prov_reg
@@ -1085,7 +1085,7 @@ fn create_fallback_provider(provider_handles: Vec<u32>) -> PyResult<u32> {
 
     let fallback = Arc::new(resilience::FallbackProvider::new(providers_vec));
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    providers().lock().unwrap().insert(id, fallback);
+    providers().lock().expect("registry mutex poisoned").insert(id, fallback);
     Ok(id)
 }
 
@@ -1111,7 +1111,7 @@ fn create_circuit_breaker(
 
     let cb = Arc::new(resilience::CircuitBreaker::new(inner, config));
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    providers().lock().unwrap().insert(id, cb);
+    providers().lock().expect("registry mutex poisoned").insert(id, cb);
     Ok(id)
 }
 
@@ -1122,7 +1122,7 @@ fn create_resilient_provider(
     fallback_handles: Vec<u32>,
     enable_circuit_breaker: Option<bool>,
 ) -> PyResult<u32> {
-    let prov_reg = providers().lock().unwrap();
+    let prov_reg = providers().lock().expect("registry mutex poisoned");
     let primary = prov_reg
         .get(&primary_handle)
         .ok_or_else(|| py_err("Primary provider not found"))?
@@ -1146,7 +1146,7 @@ fn create_resilient_provider(
 
     let provider = builder.build();
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    providers().lock().unwrap().insert(id, provider);
+    providers().lock().expect("registry mutex poisoned").insert(id, provider);
     Ok(id)
 }
 
@@ -1177,7 +1177,7 @@ fn create_plugin_registry() -> u32 {
 
 #[pyfunction]
 fn plugin_registry_add_telemetry(handle: u32) -> PyResult<()> {
-    let mut reg = plugin_registries().lock().unwrap();
+    let mut reg = plugin_registries().lock().expect("registry mutex poisoned");
     let registry = reg
         .get_mut(&handle)
         .ok_or_else(|| py_err("PluginRegistry not found"))?;
@@ -1187,7 +1187,7 @@ fn plugin_registry_add_telemetry(handle: u32) -> PyResult<()> {
 
 #[pyfunction]
 fn plugin_registry_add_memory(handle: u32) -> PyResult<()> {
-    let mut reg = plugin_registries().lock().unwrap();
+    let mut reg = plugin_registries().lock().expect("registry mutex poisoned");
     let registry = reg
         .get_mut(&handle)
         .ok_or_else(|| py_err("PluginRegistry not found"))?;
@@ -1197,7 +1197,7 @@ fn plugin_registry_add_memory(handle: u32) -> PyResult<()> {
 
 #[pyfunction]
 fn plugin_registry_list(handle: u32) -> PyResult<Vec<String>> {
-    let reg = plugin_registries().lock().unwrap();
+    let reg = plugin_registries().lock().expect("registry mutex poisoned");
     let registry = reg
         .get(&handle)
         .ok_or_else(|| py_err("PluginRegistry not found"))?;
@@ -1208,7 +1208,7 @@ fn plugin_registry_list(handle: u32) -> PyResult<Vec<String>> {
 fn plugin_registry_emit(handle: u32, event_json: String) -> PyResult<()> {
     let event: plugin::GaussEvent = serde_json::from_str(&event_json)
         .map_err(|e| py_err(format!("Invalid event JSON: {e}")))?;
-    let reg = plugin_registries().lock().unwrap();
+    let reg = plugin_registries().lock().expect("registry mutex poisoned");
     let registry = reg
         .get(&handle)
         .ok_or_else(|| py_err("PluginRegistry not found"))?;
@@ -1257,13 +1257,13 @@ fn create_tool_validator(strategies: Option<Vec<String>>) -> u32 {
         None => RustToolValidator::new(),
     };
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    tool_validators().lock().unwrap().insert(id, validator);
+    tool_validators().lock().expect("registry mutex poisoned").insert(id, validator);
     id
 }
 
 #[pyfunction]
 fn tool_validator_validate(handle: u32, input: String, schema: String) -> PyResult<String> {
-    let reg = tool_validators().lock().unwrap();
+    let reg = tool_validators().lock().expect("registry mutex poisoned");
     let validator = reg
         .get(&handle)
         .ok_or_else(|| py_err("ToolValidator not found"))?;
