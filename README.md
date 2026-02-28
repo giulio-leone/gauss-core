@@ -120,6 +120,10 @@ gauss run "What is the meaning of life?"
 - **Resilience**: Fallback provider chains, circuit breaker (3-state), composed retry+fallback+CB
 - **Stream Transforms**: Partial JSON parser, object accumulator, map/filter/tap transformers, pipeline composition
 - **Plugin System**: Plugin lifecycle, event bus (pub/sub), registry with topological dependency sort
+- **Agent Patterns**: ToolValidator (multi-stage coercion), ToolChain (sequential composition), ReflectionAgent, PlanningAgent
+- **Config DSL**: Declarative agent definition from JSON/YAML/TOML with `${ENV}` resolution
+- **Benchmarks**: Criterion micro-benchmarks for hot paths (JSON parsing, validation, serialization)
+- **Property Tests**: proptest-based fuzzing for partial JSON, validators, message serde, PII regex
 - **CLI**: `gauss init`, `gauss run`, `gauss chat`, project templates
 - **4 targets**: Native (NAPI), Browser (WASM), Python (PyO3), CLI
 
@@ -333,6 +337,41 @@ registry.emit(&GaussEvent::AgentStart {
     agent_id: "agent-1".into(),
     model: "gpt-4o".into(),
 });
+```
+
+## Agent Patterns
+
+```rust
+use gauss_core::patterns::*;
+
+// Tool input validation with multi-stage coercion
+let validator = ToolValidator::new();
+let coerced = validator.validate(input, &schema)?;
+
+// Sequential tool composition
+let chain = ToolChain::new("pipeline")
+    .add(fetch_tool)
+    .add(parse_tool)
+    .add(summarize_tool);
+let result = chain.execute(initial_input, &provider).await?;
+```
+
+## Config DSL
+
+```yaml
+# gauss.yaml
+name: my-agent
+provider: { kind: openai, model: gpt-5.2, api_key: "${OPENAI_API_KEY}" }
+instructions: "You are a helpful assistant."
+options: { temperature: 0.7, max_tokens: 4096 }
+tools:
+  - name: search
+    description: "Search the web"
+    parameters: { type: object, properties: { query: { type: string } } }
+```
+
+```rust
+let config = AgentConfig::from_file("gauss.yaml")?;
 ```
 
 ## Building
