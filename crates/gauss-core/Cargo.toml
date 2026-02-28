@@ -1,11 +1,14 @@
 [package]
 name = "gauss-core"
-description = "Gauss Core — High-performance AI agent engine"
+description = "High-performance AI agent engine in Rust — multi-provider, tool-use, streaming, structured output, WASM-ready"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+keywords = ["ai", "agent", "llm", "openai", "wasm"]
+categories = ["api-bindings", "asynchronous", "wasm"]
+readme = "../../README.md"
 
 [features]
 default = ["native"]
