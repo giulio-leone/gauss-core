@@ -109,10 +109,10 @@ gauss run "What is the meaning of life?"
 - **Team**: Multi-agent coordination (Sequential + Parallel strategies)
 - **Memory**: Conversation, Working, Semantic memory with pluggable backends
 - **RAG**: Embedding trait, text splitting, vector store, retrieval pipeline
-- **MCP**: Model Context Protocol — client & server, JSON-RPC, tool adapters
+- **MCP**: Model Context Protocol — client & server, JSON-RPC, stdio/HTTP/SSE transports
 - **Agent Network**: A2A protocol, routing, delegation, supervisor/worker topology
 - **Middleware**: Before/after hooks with priority ordering, logging, caching
-- **Context Management**: Token counting, pruning strategies, sliding window
+- **Context Management**: tiktoken-rs precise counting, pruning strategies, sliding window
 - **Human-in-the-Loop**: Approval gates, checkpoints, suspend/resume
 - **Evaluation**: Scorer trait, built-in scorers, dataset loading, batch runner
 - **Observability**: Span tracing, agent metrics, telemetry collector
@@ -157,9 +157,9 @@ use gauss_core::memory::{InMemoryMemory, Memory, MemoryEntry, MemoryTier, Recall
 
 let mem = InMemoryMemory::new();
 let entry = MemoryEntry::new(MemoryTier::Short, serde_json::json!("User prefers Rust"));
-mem.store("session-1", entry).await?;
+mem.store(entry).await?;
 
-let results = mem.recall("session-1", &RecallOptions::default()).await?;
+let results = mem.recall(RecallOptions::default()).await?;
 ```
 
 ## RAG Pipeline
@@ -175,14 +175,74 @@ let store = InMemoryVectorStore::new();
 ## Agent Network
 
 ```rust
-use gauss_core::network::AgentNetwork;
+use gauss_core::network::{AgentNetwork, AgentNode, AgentCard};
 
 let mut network = AgentNetwork::new();
-network.add_agent(researcher);
-network.add_agent(writer);
-network.set_supervisor(coordinator);
+network.add_agent(AgentNode {
+    agent: researcher,
+    card: AgentCard { name: "researcher".into(), ..Default::default() },
+    connections: vec!["writer".into()],
+});
+network.set_supervisor("coordinator");
 
-let result = network.delegate("researcher", "Find info on quantum computing").await?;
+let result = network.delegate("researcher", messages).await?;
+```
+
+## MCP Transport
+
+```rust
+use gauss_core::mcp::*;
+
+// Server: expose tools over stdio
+let mut server = McpServer::new("my-server", "1.0.0");
+server.add_tool(my_tool);
+let transport = StdioTransport::new();
+serve(&server, &transport).await?;
+
+// Client: connect to an external MCP server
+let transport = ChildProcessTransport::spawn("npx", &["-y", "@some/mcp-server"])?;
+let mut client = TransportMcpClient::new(transport);
+let caps = client.initialize().await?;
+let tools = client.list_tools().await?;
+
+// Client: connect via HTTP
+let transport = HttpTransport::new("http://localhost:8080/mcp");
+let mut client = TransportMcpClient::new(transport);
+```
+
+## Token Counting (tiktoken)
+
+```rust
+use gauss_core::context::{count_tokens, count_tokens_for_model};
+
+let tokens = count_tokens("Hello, world!");       // cl100k_base (precise)
+let tokens = count_tokens_for_model("Hello!", "gpt-4o"); // model-specific encoding
+```
+
+## Python
+
+```python
+import asyncio
+from gauss_core import (
+    create_provider, generate, create_memory, memory_store,
+    count_tokens, create_vector_store, destroy_provider,
+)
+
+async def main():
+    provider = create_provider("openai", "gpt-5.2", "sk-...")
+    result = await generate(provider, '[{"role":"user","content":"Hello!"}]')
+    print(result)
+
+    # Memory
+    mem = create_memory()
+    await memory_store(mem, '{"tier":"Short","content":"User likes Rust"}')
+
+    # Token counting (tiktoken-powered)
+    tokens = count_tokens("Hello, world!")
+
+    destroy_provider(provider)
+
+asyncio.run(main())
 ```
 
 ## Building
