@@ -11,6 +11,7 @@ name = "gauss_py"
 crate-type = ["cdylib"]
 
 [dependencies]
+futures.workspace = true
 gauss-core = { workspace = true, features = ["native"] }
 pyo3 = { version = "0.23", features = ["extension-module"] }
 pyo3-async-runtimes = { version = "0.23", features = ["tokio-runtime"] }

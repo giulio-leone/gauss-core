@@ -1876,3 +1876,332 @@ pub fn agent_config_from_json(json_str: String) -> Result<String> {
 pub fn agent_config_resolve_env(value: String) -> String {
     gauss_core::config::resolve_env(&value)
 }
+
+// =============================================================================
+// Graph API — handle-based DAG builder and executor
+// =============================================================================
+
+fn graphs() -> &'static Mutex<HashMap<u32, GraphState>> {
+    use std::sync::OnceLock;
+    static GRAPHS: OnceLock<Mutex<HashMap<u32, GraphState>>> = OnceLock::new();
+    GRAPHS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+struct GraphState {
+    nodes: Vec<GraphNodeDef>,
+    edges: Vec<(String, String)>,
+}
+
+struct GraphNodeDef {
+    id: String,
+    agent_name: String,
+    provider_handle: u32,
+    instructions: Option<String>,
+    tools: Vec<(String, String, Option<serde_json::Value>)>,
+}
+
+#[napi]
+pub fn create_graph() -> u32 {
+    let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
+    graphs().lock().unwrap().insert(
+        id,
+        GraphState {
+            nodes: vec![],
+            edges: vec![],
+        },
+    );
+    id
+}
+
+#[napi]
+pub fn graph_add_node(
+    handle: u32,
+    node_id: String,
+    agent_name: String,
+    provider_handle: u32,
+    instructions: Option<String>,
+    tools: Vec<ToolDef>,
+) -> Result<()> {
+    let mut g = graphs().lock().unwrap();
+    let state = g
+        .get_mut(&handle)
+        .ok_or_else(|| napi::Error::from_reason("Graph not found"))?;
+    state.nodes.push(GraphNodeDef {
+        id: node_id,
+        agent_name,
+        provider_handle,
+        instructions,
+        tools: tools
+            .into_iter()
+            .map(|t| (t.name, t.description, t.parameters))
+            .collect(),
+    });
+    Ok(())
+}
+
+#[napi]
+pub fn graph_add_edge(handle: u32, from: String, to: String) -> Result<()> {
+    let mut g = graphs().lock().unwrap();
+    let state = g
+        .get_mut(&handle)
+        .ok_or_else(|| napi::Error::from_reason("Graph not found"))?;
+    state.edges.push((from, to));
+    Ok(())
+}
+
+#[napi]
+pub async fn graph_run(handle: u32, prompt: String) -> Result<serde_json::Value> {
+    let state = {
+        let g = graphs().lock().unwrap();
+        let s = g
+            .get(&handle)
+            .ok_or_else(|| napi::Error::from_reason("Graph not found"))?;
+        // Clone node configs for async context
+        let nodes: Vec<_> = s
+            .nodes
+            .iter()
+            .map(|n| {
+                (
+                    n.id.clone(),
+                    n.agent_name.clone(),
+                    n.provider_handle,
+                    n.instructions.clone(),
+                    n.tools.clone(),
+                )
+            })
+            .collect();
+        let edges = s.edges.clone();
+        (nodes, edges)
+    };
+
+    let (node_defs, edges) = state;
+
+    // Build a gauss_core::Graph
+    let mut builder = gauss_core::Graph::builder();
+
+    for (node_id, agent_name, prov_handle, instructions, tools) in &node_defs {
+        let provider = {
+            let provs = providers().lock().unwrap();
+            provs.get(prov_handle).cloned().ok_or_else(|| {
+                napi::Error::from_reason(format!("Provider {prov_handle} not found"))
+            })?
+        };
+
+        let mut agent_builder = RustAgent::builder(agent_name.clone(), provider);
+        if let Some(instr) = instructions {
+            agent_builder = agent_builder.instructions(instr.clone());
+        }
+        for (name, desc, params) in tools {
+            let mut tb = RustTool::builder(name, desc);
+            if let Some(p) = params {
+                tb = tb.parameters_json(p.clone());
+            }
+            agent_builder = agent_builder.tool(tb.build());
+        }
+        let agent = agent_builder.build();
+
+        let nid = node_id.clone();
+        builder = builder.node(nid, agent, |_deps| {
+            // Pass completed node outputs as context messages
+            vec![RustMessage::user("Continue based on prior context.")]
+        });
+    }
+
+    for (from, to) in &edges {
+        builder = builder.edge(from.clone(), to.clone());
+    }
+
+    let graph = builder.build();
+    let result = graph
+        .run(prompt)
+        .await
+        .map_err(|e| napi::Error::from_reason(format!("{e}")))?;
+
+    let outputs: serde_json::Value = result
+        .outputs
+        .iter()
+        .map(|(k, v)| {
+            (
+                k.clone(),
+                json!({ "node_id": v.node_id, "text": v.text, "data": v.data }),
+            )
+        })
+        .collect::<serde_json::Map<String, serde_json::Value>>()
+        .into();
+
+    Ok(json!({
+        "outputs": outputs,
+        "final_text": result.final_output.map(|o| o.text),
+    }))
+}
+
+#[napi]
+pub fn destroy_graph(handle: u32) -> Result<()> {
+    graphs()
+        .lock()
+        .unwrap()
+        .remove(&handle)
+        .ok_or_else(|| napi::Error::from_reason("Graph not found"))?;
+    Ok(())
+}
+
+// =============================================================================
+// Workflow API — handle-based sequential/parallel workflow executor
+// =============================================================================
+
+fn workflows() -> &'static Mutex<HashMap<u32, WorkflowState>> {
+    use std::sync::OnceLock;
+    static WORKFLOWS: OnceLock<Mutex<HashMap<u32, WorkflowState>>> = OnceLock::new();
+    WORKFLOWS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+struct WorkflowState {
+    steps: Vec<WorkflowStepDef>,
+    dependencies: Vec<(String, String)>,
+}
+
+struct WorkflowStepDef {
+    id: String,
+    agent_name: String,
+    provider_handle: u32,
+    instructions: Option<String>,
+    tools: Vec<(String, String, Option<serde_json::Value>)>,
+}
+
+#[napi]
+pub fn create_workflow() -> u32 {
+    let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
+    workflows().lock().unwrap().insert(
+        id,
+        WorkflowState {
+            steps: vec![],
+            dependencies: vec![],
+        },
+    );
+    id
+}
+
+#[napi]
+pub fn workflow_add_step(
+    handle: u32,
+    step_id: String,
+    agent_name: String,
+    provider_handle: u32,
+    instructions: Option<String>,
+    tools: Vec<ToolDef>,
+) -> Result<()> {
+    let mut w = workflows().lock().unwrap();
+    let state = w
+        .get_mut(&handle)
+        .ok_or_else(|| napi::Error::from_reason("Workflow not found"))?;
+    state.steps.push(WorkflowStepDef {
+        id: step_id,
+        agent_name,
+        provider_handle,
+        instructions,
+        tools: tools
+            .into_iter()
+            .map(|t| (t.name, t.description, t.parameters))
+            .collect(),
+    });
+    Ok(())
+}
+
+#[napi]
+pub fn workflow_add_dependency(handle: u32, step_id: String, depends_on: String) -> Result<()> {
+    let mut w = workflows().lock().unwrap();
+    let state = w
+        .get_mut(&handle)
+        .ok_or_else(|| napi::Error::from_reason("Workflow not found"))?;
+    state.dependencies.push((step_id, depends_on));
+    Ok(())
+}
+
+#[napi]
+pub async fn workflow_run(handle: u32, prompt: String) -> Result<serde_json::Value> {
+    let state = {
+        let w = workflows().lock().unwrap();
+        let s = w
+            .get(&handle)
+            .ok_or_else(|| napi::Error::from_reason("Workflow not found"))?;
+        let steps: Vec<_> = s
+            .steps
+            .iter()
+            .map(|st| {
+                (
+                    st.id.clone(),
+                    st.agent_name.clone(),
+                    st.provider_handle,
+                    st.instructions.clone(),
+                    st.tools.clone(),
+                )
+            })
+            .collect();
+        let deps = s.dependencies.clone();
+        (steps, deps)
+    };
+
+    let (step_defs, deps) = state;
+
+    let mut builder = gauss_core::Workflow::builder();
+
+    for (step_id, agent_name, prov_handle, instructions, tools) in &step_defs {
+        let provider = {
+            let provs = providers().lock().unwrap();
+            provs.get(prov_handle).cloned().ok_or_else(|| {
+                napi::Error::from_reason(format!("Provider {prov_handle} not found"))
+            })?
+        };
+
+        let mut agent_builder = RustAgent::builder(agent_name.clone(), provider);
+        if let Some(instr) = instructions {
+            agent_builder = agent_builder.instructions(instr.clone());
+        }
+        for (name, desc, params) in tools {
+            let mut tb = RustTool::builder(name, desc);
+            if let Some(p) = params {
+                tb = tb.parameters_json(p.clone());
+            }
+            agent_builder = agent_builder.tool(tb.build());
+        }
+        let agent = agent_builder.build();
+
+        builder = builder.agent_step(step_id.clone(), agent, |_completed| {
+            vec![RustMessage::user("Continue.")]
+        });
+    }
+
+    for (step_id, depends_on) in &deps {
+        builder = builder.dependency(step_id.clone(), depends_on.clone());
+    }
+
+    let workflow = builder.build();
+    let initial = vec![RustMessage::user(prompt)];
+    let result = workflow
+        .run(initial)
+        .await
+        .map_err(|e| napi::Error::from_reason(format!("{e}")))?;
+
+    let outputs: serde_json::Value = result
+        .iter()
+        .map(|(k, v)| {
+            (
+                k.clone(),
+                json!({ "step_id": v.step_id, "text": v.text, "data": v.data }),
+            )
+        })
+        .collect::<serde_json::Map<String, serde_json::Value>>()
+        .into();
+
+    Ok(json!({ "steps": outputs }))
+}
+
+#[napi]
+pub fn destroy_workflow(handle: u32) -> Result<()> {
+    workflows()
+        .lock()
+        .unwrap()
+        .remove(&handle)
+        .ok_or_else(|| napi::Error::from_reason("Workflow not found"))?;
+    Ok(())
+}
