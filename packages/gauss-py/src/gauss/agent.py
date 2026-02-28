@@ -115,17 +115,37 @@ class Agent:
         )
 
     async def stream(self, prompt: str) -> AsyncIterator[StreamChunk]:
-        """Stream agent execution (falls back to single-shot until PyO3 async streaming is wired)."""
-        from gauss._native import generate
+        """Stream agent execution via Rust provider streaming."""
+        from gauss._native import stream_generate
 
         messages = []
         if self.instructions:
             messages.append({"role": "system", "content": self.instructions})
         messages.append({"role": "user", "content": prompt})
 
-        result_json = await generate(self.model.handle, json.dumps(messages))
-        result = json.loads(result_json) if isinstance(result_json, str) else result_json
-        text = result.get("text", "")
+        events_json = await stream_generate(
+            self.model.handle,
+            json.dumps(messages),
+            self.temperature,
+            self.max_tokens,
+        )
+        events = json.loads(events_json) if isinstance(events_json, str) else events_json
 
-        yield StreamChunk(type="text_delta", delta=text, text=text)
-        yield StreamChunk(type="done", text=text)
+        text_acc = ""
+        for event in events:
+            evt = event if isinstance(event, dict) else json.loads(event)
+            evt_type = evt.get("type", "")
+
+            if evt_type == "text_delta":
+                delta = evt.get("TextDelta", evt.get("text_delta", ""))
+                if isinstance(delta, str):
+                    text_acc += delta
+                    yield StreamChunk(type="text_delta", delta=delta, text=text_acc)
+            elif evt_type == "done":
+                yield StreamChunk(type="done", text=text_acc)
+            elif evt_type == "finish_reason":
+                continue
+            elif evt_type == "usage":
+                continue
+            else:
+                yield StreamChunk(type=evt_type, text=text_acc)

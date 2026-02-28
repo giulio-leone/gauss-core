@@ -1,0 +1,16 @@
+from __future__ import annotations
+
+from typing import Any
+
+class Network:
+    def __init__(self) -> None: ...
+    def add_agent(
+        self,
+        name: str,
+        provider_handle: int,
+        card: dict[str, Any] | None = None,
+        connections: list[str] | None = None,
+    ) -> Network: ...
+    def set_supervisor(self, name: str) -> Network: ...
+    async def delegate(self, agent_name: str, prompt: str) -> dict[str, Any]: ...
+    def destroy(self) -> None: ...

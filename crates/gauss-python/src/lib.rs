@@ -167,6 +167,51 @@ fn generate(
     })
 }
 
+/// Stream generate. Returns JSON array of StreamEvent objects.
+#[pyfunction]
+#[pyo3(signature = (provider_handle, messages_json, temperature=None, max_tokens=None))]
+fn stream_generate(
+    py: Python<'_>,
+    provider_handle: u32,
+    messages_json: String,
+    temperature: Option<f64>,
+    max_tokens: Option<u32>,
+) -> PyResult<Bound<'_, pyo3::types::PyAny>> {
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        use futures::StreamExt;
+        let provider = get_provider(provider_handle)?;
+        let rust_msgs = parse_messages(&messages_json)?;
+
+        let opts = GenerateOptions {
+            temperature,
+            max_tokens,
+            ..GenerateOptions::default()
+        };
+
+        let mut stream = provider
+            .stream(&rust_msgs, &[], &opts)
+            .await
+            .map_err(|e| PyRuntimeError::new_err(format!("Stream error: {e}")))?;
+
+        let mut events = Vec::new();
+        while let Some(event) = stream.next().await {
+            match event {
+                Ok(e) => {
+                    let json = serde_json::to_string(&e)
+                        .map_err(|e| PyRuntimeError::new_err(format!("{e}")))?;
+                    events.push(json);
+                }
+                Err(e) => {
+                    return Err(PyRuntimeError::new_err(format!("Stream event error: {e}")));
+                }
+            }
+        }
+
+        let output = format!("[{}]", events.join(","));
+        Ok(output)
+    })
+}
+
 /// Run an agent. Returns JSON string.
 #[pyfunction]
 #[pyo3(signature = (name, provider_handle, messages_json, options_json=None))]
@@ -1267,6 +1312,7 @@ fn gauss_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(create_provider, m)?)?;
     m.add_function(wrap_pyfunction!(destroy_provider, m)?)?;
     m.add_function(wrap_pyfunction!(generate, m)?)?;
+    m.add_function(wrap_pyfunction!(stream_generate, m)?)?;
     m.add_function(wrap_pyfunction!(agent_run, m)?)?;
     // Memory
     m.add_function(wrap_pyfunction!(create_memory, m)?)?;
