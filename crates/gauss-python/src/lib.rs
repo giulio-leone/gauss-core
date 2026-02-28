@@ -306,8 +306,8 @@ fn memory_store(
             .cloned()
             .ok_or_else(|| py_err("Memory not found"))?;
         let entry: memory::MemoryEntry =
-            serde_json::from_str(&entry_json).map_err(|e| py_err(e))?;
-        mem.store(entry).await.map_err(|e| py_err(e))
+            serde_json::from_str(&entry_json).map_err(py_err)?;
+        mem.store(entry).await.map_err(py_err)
     })
 }
 
@@ -327,11 +327,11 @@ fn memory_recall(
             .cloned()
             .ok_or_else(|| py_err("Memory not found"))?;
         let opts: memory::RecallOptions = match options_json {
-            Some(j) => serde_json::from_str(&j).map_err(|e| py_err(e))?,
+            Some(j) => serde_json::from_str(&j).map_err(py_err)?,
             None => memory::RecallOptions::default(),
         };
-        let entries = mem.recall(opts).await.map_err(|e| py_err(e))?;
-        serde_json::to_string(&entries).map_err(|e| py_err(e))
+        let entries = mem.recall(opts).await.map_err(py_err)?;
+        serde_json::to_string(&entries).map_err(py_err)
     })
 }
 
@@ -351,7 +351,7 @@ fn memory_clear(
             .ok_or_else(|| py_err("Memory not found"))?;
         memory::Memory::clear(&*mem, session_id.as_deref())
             .await
-            .map_err(|e| py_err(e))
+            .map_err(py_err)
     })
 }
 
@@ -414,8 +414,8 @@ fn vector_store_upsert(
             .get(&handle)
             .cloned()
             .ok_or_else(|| py_err("VectorStore not found"))?;
-        let chunks: Vec<rag::Chunk> = serde_json::from_str(&chunks_json).map_err(|e| py_err(e))?;
-        store.upsert(chunks).await.map_err(|e| py_err(e))
+        let chunks: Vec<rag::Chunk> = serde_json::from_str(&chunks_json).map_err(py_err)?;
+        store.upsert(chunks).await.map_err(py_err)
     })
 }
 
@@ -434,12 +434,12 @@ fn vector_store_search(
             .get(&handle)
             .cloned()
             .ok_or_else(|| py_err("VectorStore not found"))?;
-        let embedding: Vec<f32> = serde_json::from_str(&embedding_json).map_err(|e| py_err(e))?;
+        let embedding: Vec<f32> = serde_json::from_str(&embedding_json).map_err(py_err)?;
         let results = store
             .search(&embedding, top_k as usize)
             .await
-            .map_err(|e| py_err(e))?;
-        serde_json::to_string(&results).map_err(|e| py_err(e))
+            .map_err(py_err)?;
+        serde_json::to_string(&results).map_err(py_err)
     })
 }
 
@@ -455,8 +455,8 @@ fn destroy_vector_store(handle: u32) -> PyResult<()> {
 
 #[pyfunction]
 fn cosine_similarity(a_json: &str, b_json: &str) -> PyResult<f64> {
-    let a: Vec<f32> = serde_json::from_str(a_json).map_err(|e| py_err(e))?;
-    let b: Vec<f32> = serde_json::from_str(b_json).map_err(|e| py_err(e))?;
+    let a: Vec<f32> = serde_json::from_str(a_json).map_err(py_err)?;
+    let b: Vec<f32> = serde_json::from_str(b_json).map_err(py_err)?;
     Ok(rag::cosine_similarity(&a, &b) as f64)
 }
 
@@ -483,7 +483,7 @@ fn mcp_server_add_tool(handle: u32, tool_json: String) -> PyResult<()> {
         .get(&handle)
         .cloned()
         .ok_or_else(|| py_err("McpServer not found"))?;
-    let mcp_tool: mcp::McpTool = serde_json::from_str(&tool_json).map_err(|e| py_err(e))?;
+    let mcp_tool: mcp::McpTool = serde_json::from_str(&tool_json).map_err(py_err)?;
     let gauss_tool = mcp::mcp_tool_to_gauss(&mcp_tool);
     server.blocking_lock().add_tool(gauss_tool);
     Ok(())
@@ -503,14 +503,14 @@ fn mcp_server_handle(
             .cloned()
             .ok_or_else(|| py_err("McpServer not found"))?;
         let msg: mcp::JsonRpcMessage =
-            serde_json::from_str(&message_json).map_err(|e| py_err(e))?;
+            serde_json::from_str(&message_json).map_err(py_err)?;
         let resp = server
             .lock()
             .await
             .handle_message(msg)
             .await
-            .map_err(|e| py_err(e))?;
-        serde_json::to_string(&resp).map_err(|e| py_err(e))
+            .map_err(py_err)?;
+        serde_json::to_string(&resp).map_err(py_err)
     })
 }
 
@@ -553,7 +553,7 @@ fn network_add_agent(
         .ok_or_else(|| py_err("Network not found"))?;
     let provider = get_provider(provider_handle)?;
     let card: network::AgentCard = match card_json {
-        Some(j) => serde_json::from_str(&j).map_err(|e| py_err(e))?,
+        Some(j) => serde_json::from_str(&j).map_err(py_err)?,
         None => network::AgentCard {
             name: name.clone(),
             ..Default::default()
@@ -601,8 +601,8 @@ fn network_delegate(
             .await
             .delegate(&agent_name, msgs)
             .await
-            .map_err(|e| py_err(e))?;
-        serde_json::to_string(&output).map_err(|e| py_err(e))
+            .map_err(py_err)?;
+        serde_json::to_string(&output).map_err(py_err)
     })
 }
 
@@ -641,12 +641,12 @@ fn approval_request(
         .get(&handle)
         .cloned()
         .ok_or_else(|| py_err("ApprovalManager not found"))?;
-    let args: serde_json::Value = serde_json::from_str(&args_json).map_err(|e| py_err(e))?;
+    let args: serde_json::Value = serde_json::from_str(&args_json).map_err(py_err)?;
     let req = mgr
         .lock()
         .unwrap()
         .request_approval(tool_name, args, 0, session_id)
-        .map_err(|e| py_err(e))?;
+        .map_err(py_err)?;
     Ok(req.id.clone())
 }
 
@@ -660,13 +660,13 @@ fn approval_approve(handle: u32, request_id: &str, modified_args: Option<String>
         .cloned()
         .ok_or_else(|| py_err("ApprovalManager not found"))?;
     let args: Option<serde_json::Value> = match modified_args {
-        Some(j) => Some(serde_json::from_str(&j).map_err(|e| py_err(e))?),
+        Some(j) => Some(serde_json::from_str(&j).map_err(py_err)?),
         None => None,
     };
     mgr.lock()
         .unwrap()
         .approve(request_id, args)
-        .map_err(|e| py_err(e))?;
+        .map_err(py_err)?;
     Ok(())
 }
 
@@ -682,7 +682,7 @@ fn approval_deny(handle: u32, request_id: &str, reason: Option<String>) -> PyRes
     mgr.lock()
         .unwrap()
         .deny(request_id, reason)
-        .map_err(|e| py_err(e))?;
+        .map_err(py_err)?;
     Ok(())
 }
 
@@ -694,8 +694,8 @@ fn approval_list_pending(handle: u32) -> PyResult<String> {
         .get(&handle)
         .cloned()
         .ok_or_else(|| py_err("ApprovalManager not found"))?;
-    let pending = mgr.lock().unwrap().list_pending().map_err(|e| py_err(e))?;
-    serde_json::to_string(&pending).map_err(|e| py_err(e))
+    let pending = mgr.lock().unwrap().list_pending().map_err(py_err)?;
+    serde_json::to_string(&pending).map_err(py_err)
 }
 
 #[pyfunction]
@@ -734,8 +734,8 @@ fn checkpoint_save(
             .get(&handle)
             .cloned()
             .ok_or_else(|| py_err("CheckpointStore not found"))?;
-        let cp: hitl::Checkpoint = serde_json::from_str(&checkpoint_json).map_err(|e| py_err(e))?;
-        store.save(&cp).await.map_err(|e| py_err(e))
+        let cp: hitl::Checkpoint = serde_json::from_str(&checkpoint_json).map_err(py_err)?;
+        store.save(&cp).await.map_err(py_err)
     })
 }
 
@@ -753,8 +753,8 @@ fn checkpoint_load(
             .get(&handle)
             .cloned()
             .ok_or_else(|| py_err("CheckpointStore not found"))?;
-        let cp = store.load(&checkpoint_id).await.map_err(|e| py_err(e))?;
-        serde_json::to_string(&cp).map_err(|e| py_err(e))
+        let cp = store.load(&checkpoint_id).await.map_err(py_err)?;
+        serde_json::to_string(&cp).map_err(py_err)
     })
 }
 
@@ -797,7 +797,7 @@ fn eval_add_scorer(handle: u32, scorer_type: &str) -> PyResult<()> {
         "exact_match" => Arc::new(eval::ExactMatchScorer),
         "contains" => Arc::new(eval::ContainsScorer),
         "length_ratio" => Arc::new(eval::LengthRatioScorer),
-        other => return Err(py_err(&format!("Unknown scorer: {other}"))),
+        other => return Err(py_err(format!("Unknown scorer: {other}"))),
     };
     runner.lock().unwrap().add_scorer(scorer);
     Ok(())
@@ -805,14 +805,14 @@ fn eval_add_scorer(handle: u32, scorer_type: &str) -> PyResult<()> {
 
 #[pyfunction]
 fn load_dataset_jsonl(jsonl: &str) -> PyResult<String> {
-    let cases = eval::load_dataset_jsonl(jsonl).map_err(|e| py_err(e))?;
-    serde_json::to_string(&cases).map_err(|e| py_err(e))
+    let cases = eval::load_dataset_jsonl(jsonl).map_err(py_err)?;
+    serde_json::to_string(&cases).map_err(py_err)
 }
 
 #[pyfunction]
 fn load_dataset_json(json_str: &str) -> PyResult<String> {
-    let cases = eval::load_dataset_json(json_str).map_err(|e| py_err(e))?;
-    serde_json::to_string(&cases).map_err(|e| py_err(e))
+    let cases = eval::load_dataset_json(json_str).map_err(py_err)?;
+    serde_json::to_string(&cases).map_err(py_err)
 }
 
 #[pyfunction]
@@ -845,7 +845,7 @@ fn telemetry_record_span(handle: u32, span_json: &str) -> PyResult<()> {
         .get(&handle)
         .cloned()
         .ok_or_else(|| py_err("TelemetryCollector not found"))?;
-    let span: telemetry::SpanRecord = serde_json::from_str(span_json).map_err(|e| py_err(e))?;
+    let span: telemetry::SpanRecord = serde_json::from_str(span_json).map_err(py_err)?;
     coll.lock().unwrap().record_span(span);
     Ok(())
 }
@@ -859,7 +859,7 @@ fn telemetry_export_spans(handle: u32) -> PyResult<String> {
         .cloned()
         .ok_or_else(|| py_err("TelemetryCollector not found"))?;
     let spans = coll.lock().unwrap().export_spans();
-    serde_json::to_string(&spans).map_err(|e| py_err(e))
+    serde_json::to_string(&spans).map_err(py_err)
 }
 
 #[pyfunction]
@@ -871,7 +871,7 @@ fn telemetry_export_metrics(handle: u32) -> PyResult<String> {
         .cloned()
         .ok_or_else(|| py_err("TelemetryCollector not found"))?;
     let metrics = coll.lock().unwrap().export_metrics();
-    serde_json::to_string(&metrics).map_err(|e| py_err(e))
+    serde_json::to_string(&metrics).map_err(py_err)
 }
 
 #[pyfunction]
@@ -997,7 +997,7 @@ fn guardrail_chain_add_regex_filter(
 #[pyfunction]
 fn guardrail_chain_add_schema(handle: u32, schema_json: String) -> PyResult<()> {
     let schema: serde_json::Value = serde_json::from_str(&schema_json)
-        .map_err(|e| py_err(&format!("Invalid JSON schema: {e}")))?;
+        .map_err(|e| py_err(format!("Invalid JSON schema: {e}")))?;
     let mut reg = guardrail_chains().lock().unwrap();
     let chain = reg
         .get_mut(&handle)
@@ -1034,7 +1034,7 @@ fn create_fallback_provider(provider_handles: Vec<u32>) -> PyResult<u32> {
     for h in provider_handles {
         let p = prov_reg
             .get(&h)
-            .ok_or_else(|| py_err(&format!("Provider {h} not found")))?
+            .ok_or_else(|| py_err(format!("Provider {h} not found")))?
             .clone();
         providers_vec.push(p);
     }
@@ -1095,7 +1095,7 @@ fn create_resilient_provider(
     for h in &fallback_handles {
         let fb = prov_reg
             .get(h)
-            .ok_or_else(|| py_err(&format!("Fallback provider {h} not found")))?
+            .ok_or_else(|| py_err(format!("Fallback provider {h} not found")))?
             .clone();
         builder = builder.fallback(fb);
     }
@@ -1164,7 +1164,7 @@ fn plugin_registry_list(handle: u32) -> PyResult<Vec<String>> {
 #[pyfunction]
 fn plugin_registry_emit(handle: u32, event_json: String) -> PyResult<()> {
     let event: plugin::GaussEvent = serde_json::from_str(&event_json)
-        .map_err(|e| py_err(&format!("Invalid event JSON: {e}")))?;
+        .map_err(|e| py_err(format!("Invalid event JSON: {e}")))?;
     let reg = plugin_registries().lock().unwrap();
     let registry = reg
         .get(&handle)
@@ -1225,13 +1225,13 @@ fn tool_validator_validate(handle: u32, input: String, schema: String) -> PyResu
         .get(&handle)
         .ok_or_else(|| py_err("ToolValidator not found"))?;
     let input_val: serde_json::Value =
-        serde_json::from_str(&input).map_err(|e| py_err(&format!("{e}")))?;
+        serde_json::from_str(&input).map_err(|e| py_err(format!("{e}")))?;
     let schema_val: serde_json::Value =
-        serde_json::from_str(&schema).map_err(|e| py_err(&format!("{e}")))?;
+        serde_json::from_str(&schema).map_err(|e| py_err(format!("{e}")))?;
     let result = validator
         .validate(input_val, &schema_val)
-        .map_err(|e| py_err(&format!("{e}")))?;
-    serde_json::to_string(&result).map_err(|e| py_err(&format!("{e}")))
+        .map_err(|e| py_err(format!("{e}")))?;
+    serde_json::to_string(&result).map_err(|e| py_err(format!("{e}")))
 }
 
 #[pyfunction]
@@ -1251,8 +1251,8 @@ fn destroy_tool_validator(handle: u32) -> PyResult<()> {
 #[pyfunction]
 fn agent_config_from_json(json_str: String) -> PyResult<String> {
     let config = gauss_core::config::AgentConfig::from_json(&json_str)
-        .map_err(|e| py_err(&format!("{e}")))?;
-    config.to_json().map_err(|e| py_err(&format!("{e}")))
+        .map_err(|e| py_err(format!("{e}")))?;
+    config.to_json().map_err(|e| py_err(format!("{e}")))
 }
 
 #[pyfunction]

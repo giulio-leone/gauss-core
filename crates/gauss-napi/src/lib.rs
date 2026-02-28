@@ -333,7 +333,7 @@ pub async fn agent_run_with_tool_executor(
                     "args": args
                 }))
                 .map_err(|e| {
-                    gauss_core::error::GaussError::tool(&tn, &format!("Serialize: {e}"))
+                    gauss_core::error::GaussError::tool(&tn, format!("Serialize: {e}"))
                 })?;
 
                 let promise: Promise<String> = exec
@@ -342,21 +342,21 @@ pub async fn agent_run_with_tool_executor(
                     .map_err(|e| {
                         gauss_core::error::GaussError::tool(
                             &tn,
-                            &format!("NAPI call error: {e}"),
+                            format!("NAPI call error: {e}"),
                         )
                     })?;
 
                 let result_str = promise.await.map_err(|e| {
                     gauss_core::error::GaussError::tool(
                         &tn,
-                        &format!("JS Promise error: {e}"),
+                        format!("JS Promise error: {e}"),
                     )
                 })?;
 
                 serde_json::from_str(&result_str).map_err(|e| {
                     gauss_core::error::GaussError::tool(
                         &tn,
-                        &format!("Deserialize: {e}"),
+                        format!("Deserialize: {e}"),
                     )
                 })
             }
@@ -455,7 +455,7 @@ pub async fn agent_stream_with_tool_executor(
                     "args": args
                 }))
                 .map_err(|e| {
-                    gauss_core::error::GaussError::tool(&tn, &format!("Serialize: {e}"))
+                    gauss_core::error::GaussError::tool(&tn, format!("Serialize: {e}"))
                 })?;
 
                 let promise: Promise<String> = exec
@@ -464,21 +464,21 @@ pub async fn agent_stream_with_tool_executor(
                     .map_err(|e| {
                         gauss_core::error::GaussError::tool(
                             &tn,
-                            &format!("NAPI call error: {e}"),
+                            format!("NAPI call error: {e}"),
                         )
                     })?;
 
                 let result_str = promise.await.map_err(|e| {
                     gauss_core::error::GaussError::tool(
                         &tn,
-                        &format!("JS Promise error: {e}"),
+                        format!("JS Promise error: {e}"),
                     )
                 })?;
 
                 serde_json::from_str(&result_str).map_err(|e| {
                     gauss_core::error::GaussError::tool(
                         &tn,
-                        &format!("Deserialize: {e}"),
+                        format!("Deserialize: {e}"),
                     )
                 })
             }
