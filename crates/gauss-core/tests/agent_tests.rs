@@ -200,3 +200,126 @@ async fn test_agent_max_steps_limit() {
     let output = agent.run(vec![Message::user("loop")]).await.unwrap();
     assert_eq!(output.steps, 3);
 }
+
+#[tokio::test]
+async fn test_agent_stop_on_tool_call() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_stop",
+                        "type": "function",
+                        "function": {
+                            "name": "final_answer",
+                            "arguments": "{\"answer\":\"42\"}"
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5}
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let config = ProviderConfig::new("test-key").base_url(mock_server.uri());
+    let provider = Arc::new(OpenAiProvider::new("gpt-5.2", config));
+
+    let tool = Tool::builder("final_answer", "Gives the final answer")
+        .execute(|_| async move { Ok(json!({"status": "done"})) })
+        .build();
+
+    let agent = Agent::builder("stop-agent", provider)
+        .tool(tool)
+        .max_steps(10)
+        .stop_when(gauss_core::agent::StopCondition::HasToolCall("final_answer".to_string()))
+        .build();
+
+    let output = agent.run(vec![Message::user("what is 42?")]).await.unwrap();
+    // Should stop after 1 step even though max_steps is 10
+    assert_eq!(output.steps, 1);
+}
+
+#[tokio::test]
+async fn test_agent_structured_output() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "{\"name\":\"Alice\",\"age\":30}"
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 8}
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let config = ProviderConfig::new("test-key").base_url(mock_server.uri());
+    let provider = Arc::new(OpenAiProvider::new("gpt-5.2", config));
+
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "age": {"type": "integer"}
+        },
+        "required": ["name", "age"]
+    });
+
+    let agent = Agent::builder("structured-agent", provider)
+        .output_schema(schema)
+        .build();
+
+    let output = agent.run(vec![Message::user("describe Alice")]).await.unwrap();
+
+    assert!(output.structured_output.is_some());
+    let parsed = output.structured_output.unwrap();
+    assert_eq!(parsed["name"], "Alice");
+    assert_eq!(parsed["age"], 30);
+}
+
+#[tokio::test]
+async fn test_agent_on_step_finish_callback() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "choices": [{
+                "message": {"role": "assistant", "content": "done"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 1}
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let config = ProviderConfig::new("test-key").base_url(mock_server.uri());
+    let provider = Arc::new(OpenAiProvider::new("gpt-5.2", config));
+
+    let callback_called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let cc = callback_called.clone();
+
+    let agent = Agent::builder("callback-agent", provider)
+        .on_step_finish(Arc::new(move |_step: &gauss_core::agent::StepResult| {
+            let cc = cc.clone();
+            Box::pin(async move {
+                cc.store(true, std::sync::atomic::Ordering::Relaxed);
+            })
+        }))
+        .build();
+
+    let _output = agent.run(vec![Message::user("test")]).await.unwrap();
+    assert!(callback_called.load(std::sync::atomic::Ordering::Relaxed));
+}

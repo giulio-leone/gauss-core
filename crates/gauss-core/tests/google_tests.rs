@@ -118,7 +118,10 @@ async fn test_google_rate_limit() {
         .await
         .unwrap_err();
 
-    assert!(matches!(err, gauss_core::error::GaussError::RateLimited { .. }));
+    assert!(matches!(
+        err,
+        gauss_core::error::GaussError::RateLimited { .. }
+    ));
 }
 
 #[tokio::test]
