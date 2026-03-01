@@ -130,6 +130,30 @@ fn parse_messages(messages_json: &str) -> PyResult<Vec<RustMessage>> {
         .collect())
 }
 
+/// Get provider capabilities. Returns JSON string.
+#[pyfunction]
+fn get_provider_capabilities(provider_handle: u32) -> PyResult<String> {
+    let provider = get_provider(provider_handle)?;
+    let caps = provider.capabilities();
+    let output = json!({
+        "streaming": caps.streaming,
+        "tool_use": caps.tool_use,
+        "vision": caps.vision,
+        "audio": caps.audio,
+        "extended_thinking": caps.extended_thinking,
+        "citations": caps.citations,
+        "cache_control": caps.cache_control,
+        "structured_output": caps.structured_output,
+        "reasoning_effort": caps.reasoning_effort,
+        "image_generation": caps.image_generation,
+        "grounding": caps.grounding,
+        "code_execution": caps.code_execution,
+        "web_search": caps.web_search,
+    });
+    serde_json::to_string(&output)
+        .map_err(|e| PyRuntimeError::new_err(format!("Serialize error: {e}")))
+}
+
 /// Call generate. Returns JSON string.
 #[pyfunction]
 #[pyo3(signature = (provider_handle, messages_json, temperature=None, max_tokens=None, thinking_budget=None, cache_control=None))]
@@ -2077,6 +2101,7 @@ fn gauss_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(version, m)?)?;
     m.add_function(wrap_pyfunction!(create_provider, m)?)?;
     m.add_function(wrap_pyfunction!(destroy_provider, m)?)?;
+    m.add_function(wrap_pyfunction!(get_provider_capabilities, m)?)?;
     m.add_function(wrap_pyfunction!(generate, m)?)?;
     m.add_function(wrap_pyfunction!(stream_generate, m)?)?;
     m.add_function(wrap_pyfunction!(agent_run, m)?)?;

@@ -667,6 +667,30 @@ pub async fn agent_stream_with_tool_executor(
     })
 }
 
+// ============ Provider Capabilities ============
+
+/// Get the capabilities of a provider.
+#[napi]
+pub fn get_provider_capabilities(provider_handle: u32) -> Result<serde_json::Value> {
+    let provider = get_provider(provider_handle)?;
+    let caps = provider.capabilities();
+    Ok(json!({
+        "streaming": caps.streaming,
+        "toolUse": caps.tool_use,
+        "vision": caps.vision,
+        "audio": caps.audio,
+        "extendedThinking": caps.extended_thinking,
+        "citations": caps.citations,
+        "cacheControl": caps.cache_control,
+        "structuredOutput": caps.structured_output,
+        "reasoningEffort": caps.reasoning_effort,
+        "imageGeneration": caps.image_generation,
+        "grounding": caps.grounding,
+        "codeExecution": caps.code_execution,
+        "webSearch": caps.web_search,
+    }))
+}
+
 // ============ Direct Provider Call ============
 
 /// Call a provider directly (without agent loop).

@@ -95,6 +95,10 @@ impl Provider for RetryProvider {
         self.inner.model()
     }
 
+    fn capabilities(&self) -> super::ProviderCapabilities {
+        self.inner.capabilities()
+    }
+
     async fn generate(
         &self,
         messages: &[Message],

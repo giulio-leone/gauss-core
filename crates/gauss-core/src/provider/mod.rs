@@ -123,13 +123,38 @@ pub enum FinishReason {
     Other(String),
 }
 
-/// Core trait for AI model providers.
+/// Capabilities supported by a provider/model combination.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProviderCapabilities {
+    pub streaming: bool,
+    pub tool_use: bool,
+    pub vision: bool,
+    pub audio: bool,
+    pub extended_thinking: bool,
+    pub citations: bool,
+    pub cache_control: bool,
+    pub structured_output: bool,
+    pub reasoning_effort: bool,
+    pub image_generation: bool,
+    pub grounding: bool,
+    pub code_execution: bool,
+    pub web_search: bool,
+}
+
 /// Core trait for AI model providers.
 #[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
 pub trait Provider: Send + Sync {
     fn name(&self) -> &str;
     fn model(&self) -> &str;
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            streaming: true,
+            tool_use: true,
+            ..Default::default()
+        }
+    }
 
     async fn generate(
         &self,
@@ -152,6 +177,14 @@ pub trait Provider: Send + Sync {
 pub trait Provider {
     fn name(&self) -> &str;
     fn model(&self) -> &str;
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            streaming: true,
+            tool_use: true,
+            ..Default::default()
+        }
+    }
 
     async fn generate(
         &self,

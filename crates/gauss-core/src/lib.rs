@@ -40,7 +40,7 @@ pub use agent::{Agent, AgentBuilder, AgentOutput};
 pub use error::GaussError;
 pub use graph::{ConsensusStrategy, Graph, GraphBuilder, GraphResult};
 pub use message::{Citation, Content, Message, Role};
-pub use provider::{GenerateOptions, Provider, ProviderConfig};
+pub use provider::{GenerateOptions, Provider, ProviderCapabilities, ProviderConfig};
 pub use streaming::StreamEvent;
 pub use team::{Team, TeamBuilder, TeamOutput};
 pub use tool::{Tool, ToolChoice};

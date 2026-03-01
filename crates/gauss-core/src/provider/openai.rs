@@ -6,7 +6,7 @@ use serde_json::json;
 use crate::error::{self, GaussError};
 use crate::message::{Content, Message, Role, Usage};
 use crate::provider::{
-    FinishReason, GenerateOptions, GenerateResult, Provider, ProviderConfig, ReasoningEffort,
+    FinishReason, GenerateOptions, GenerateResult, Provider, ProviderCapabilities, ProviderConfig, ReasoningEffort,
 };
 use crate::streaming::StreamEvent;
 use crate::tool::Tool;
@@ -329,6 +329,18 @@ impl Provider for OpenAiProvider {
 
     fn model(&self) -> &str {
         &self.model
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            streaming: true,
+            tool_use: true,
+            vision: true,
+            structured_output: true,
+            reasoning_effort: true,
+            image_generation: true,
+            ..Default::default()
+        }
     }
 
     async fn generate(

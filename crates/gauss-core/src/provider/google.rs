@@ -5,7 +5,7 @@ use tracing::debug;
 
 use crate::error::GaussError;
 use crate::message::{Content, Message, Role, Usage};
-use crate::provider::{FinishReason, GenerateOptions, GenerateResult, Provider, ProviderConfig};
+use crate::provider::{FinishReason, GenerateOptions, GenerateResult, Provider, ProviderCapabilities, ProviderConfig};
 use crate::streaming::StreamEvent;
 use crate::tool::Tool;
 
@@ -243,6 +243,19 @@ impl Provider for GoogleProvider {
 
     fn model(&self) -> &str {
         &self.model
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            streaming: true,
+            tool_use: true,
+            vision: true,
+            structured_output: true,
+            grounding: true,
+            code_execution: true,
+            web_search: true,
+            ..Default::default()
+        }
     }
 
     async fn generate(

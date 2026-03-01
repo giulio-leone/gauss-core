@@ -5,7 +5,7 @@ use tracing::debug;
 
 use crate::error::GaussError;
 use crate::message::{Content, Message, Role, Usage};
-use crate::provider::{FinishReason, GenerateOptions, GenerateResult, Provider, ProviderConfig};
+use crate::provider::{FinishReason, GenerateOptions, GenerateResult, Provider, ProviderCapabilities, ProviderConfig};
 use crate::streaming::StreamEvent;
 use crate::tool::Tool;
 
@@ -352,6 +352,19 @@ impl Provider for AnthropicProvider {
 
     fn model(&self) -> &str {
         &self.model
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            streaming: true,
+            tool_use: true,
+            vision: true,
+            extended_thinking: true,
+            citations: true,
+            cache_control: true,
+            structured_output: true,
+            ..Default::default()
+        }
     }
 
     async fn generate(
