@@ -38,8 +38,51 @@ switch (platform) {
         throw new Error(`Unsupported architecture on macOS: ${arch}`)
     }
     break
+  case 'linux':
+    switch (arch) {
+      case 'x64':
+        localFileExisted = true
+        try {
+          if (isMusl()) {
+            nativeBinding = require('./gauss-napi.linux-x64-musl.node')
+          } else {
+            nativeBinding = require('./gauss-napi.linux-x64-gnu.node')
+          }
+        } catch (e) {
+          loadError = e
+        }
+        break
+      case 'arm64':
+        localFileExisted = true
+        try {
+          if (isMusl()) {
+            nativeBinding = require('./gauss-napi.linux-arm64-musl.node')
+          } else {
+            nativeBinding = require('./gauss-napi.linux-arm64-gnu.node')
+          }
+        } catch (e) {
+          loadError = e
+        }
+        break
+      default:
+        throw new Error(`Unsupported architecture on Linux: ${arch}`)
+    }
+    break
+  case 'win32':
+    switch (arch) {
+      case 'x64':
+        localFileExisted = true
+        try {
+          nativeBinding = require('./gauss-napi.win32-x64-msvc.node')
+        } catch (e) {
+          loadError = e
+        }
+        break
+      default:
+        throw new Error(`Unsupported architecture on Windows: ${arch}`)
+    }
+    break
   default:
-    // Fallback or throw for other platforms if binary missing
     throw new Error(`Unsupported OS: ${platform}, architecture: ${arch}`)
 }
 
