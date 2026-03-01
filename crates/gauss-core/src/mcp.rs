@@ -153,6 +153,102 @@ pub struct McpPromptsCapability {
 // MCP Client Trait
 // ---------------------------------------------------------------------------
 
+/// Result of getting a prompt.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpPromptResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub messages: Vec<McpPromptMessage>,
+}
+
+/// A message in a prompt result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpPromptMessage {
+    pub role: String,
+    pub content: McpContent,
+}
+
+/// Content in an MCP message.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum McpContent {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "image")]
+    Image { data: String, mime_type: String },
+    #[serde(rename = "resource")]
+    Resource { resource: McpResourceContent },
+}
+
+/// Embedded resource content.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpResourceContent {
+    pub uri: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blob: Option<String>,
+}
+
+/// MCP sampling request (client → server model invocation).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpSamplingRequest {
+    pub messages: Vec<McpSamplingMessage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_preferences: Option<McpModelPreferences>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
+    #[serde(rename = "includeContext", skip_serializing_if = "Option::is_none")]
+    pub include_context: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    #[serde(rename = "maxTokens")]
+    pub max_tokens: u32,
+    #[serde(rename = "stopSequences", skip_serializing_if = "Option::is_none")]
+    pub stop_sequences: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+}
+
+/// A message in a sampling request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpSamplingMessage {
+    pub role: String,
+    pub content: McpContent,
+}
+
+/// Model preferences for sampling.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpModelPreferences {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hints: Option<Vec<McpModelHint>>,
+    #[serde(rename = "costPriority", skip_serializing_if = "Option::is_none")]
+    pub cost_priority: Option<f64>,
+    #[serde(rename = "speedPriority", skip_serializing_if = "Option::is_none")]
+    pub speed_priority: Option<f64>,
+    #[serde(rename = "intelligencePriority", skip_serializing_if = "Option::is_none")]
+    pub intelligence_priority: Option<f64>,
+}
+
+/// A hint for model selection.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpModelHint {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// MCP sampling response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpSamplingResponse {
+    pub role: String,
+    pub content: McpContent,
+    pub model: String,
+    #[serde(rename = "stopReason", skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<String>,
+}
+
 /// Client for connecting to MCP servers and discovering/calling tools.
 #[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
@@ -176,6 +272,25 @@ pub trait McpClient: Send + Sync {
     /// Read a resource by URI.
     async fn read_resource(&self, uri: &str) -> error::Result<serde_json::Value>;
 
+    /// List available prompts.
+    async fn list_prompts(&self) -> error::Result<Vec<McpPrompt>>;
+
+    /// Get a prompt by name with arguments.
+    async fn get_prompt(
+        &self,
+        name: &str,
+        arguments: serde_json::Value,
+    ) -> error::Result<McpPromptResult>;
+
+    /// Send a sampling request to the server.
+    async fn create_message(
+        &self,
+        request: McpSamplingRequest,
+    ) -> error::Result<McpSamplingResponse>;
+
+    /// Check if the server is healthy and responsive.
+    async fn ping(&self) -> error::Result<()>;
+
     /// Close the connection.
     async fn close(&mut self) -> error::Result<()>;
 }
@@ -192,6 +307,17 @@ pub trait McpClient {
     ) -> error::Result<serde_json::Value>;
     async fn list_resources(&self) -> error::Result<Vec<McpResource>>;
     async fn read_resource(&self, uri: &str) -> error::Result<serde_json::Value>;
+    async fn list_prompts(&self) -> error::Result<Vec<McpPrompt>>;
+    async fn get_prompt(
+        &self,
+        name: &str,
+        arguments: serde_json::Value,
+    ) -> error::Result<McpPromptResult>;
+    async fn create_message(
+        &self,
+        request: McpSamplingRequest,
+    ) -> error::Result<McpSamplingResponse>;
+    async fn ping(&self) -> error::Result<()>;
     async fn close(&mut self) -> error::Result<()>;
 }
 
@@ -256,6 +382,7 @@ pub struct McpServer {
     pub version: String,
     tools: Vec<Tool>,
     resources: Vec<McpResource>,
+    prompts: Vec<McpPrompt>,
 }
 
 impl McpServer {
@@ -265,6 +392,7 @@ impl McpServer {
             version: version.into(),
             tools: Vec::new(),
             resources: Vec::new(),
+            prompts: Vec::new(),
         }
     }
 
@@ -276,6 +404,10 @@ impl McpServer {
         self.resources.push(resource);
     }
 
+    pub fn add_prompt(&mut self, prompt: McpPrompt) {
+        self.prompts.push(prompt);
+    }
+
     /// Handle an incoming JSON-RPC message.
     pub async fn handle_message(&self, msg: JsonRpcMessage) -> error::Result<JsonRpcMessage> {
         let id = msg.id.clone().unwrap_or(serde_json::Value::Null);
@@ -283,15 +415,7 @@ impl McpServer {
 
         match method {
             "initialize" => {
-                let caps = McpServerCapabilities {
-                    tools: Some(McpToolsCapability::default()),
-                    resources: if self.resources.is_empty() {
-                        None
-                    } else {
-                        Some(McpResourcesCapability::default())
-                    },
-                    prompts: None,
-                };
+                let caps = self.capabilities();
                 Ok(JsonRpcMessage::response(
                     id,
                     serde_json::json!({
@@ -350,6 +474,32 @@ impl McpServer {
                 id,
                 serde_json::json!({ "resources": self.resources }),
             )),
+            "prompts/list" => Ok(JsonRpcMessage::response(
+                id,
+                serde_json::json!({ "prompts": self.prompts }),
+            )),
+            "prompts/get" => {
+                let params = msg.params.unwrap_or(serde_json::Value::Null);
+                let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                match self.prompts.iter().find(|p| p.name == name) {
+                    Some(_prompt) => {
+                        // Return a basic prompt result — users customize via prompt handlers
+                        Ok(JsonRpcMessage::response(
+                            id,
+                            serde_json::json!({
+                                "description": _prompt.description,
+                                "messages": []
+                            }),
+                        ))
+                    }
+                    None => Ok(JsonRpcMessage::error_response(
+                        id,
+                        -32602,
+                        &format!("Unknown prompt: {name}"),
+                    )),
+                }
+            }
+            "ping" => Ok(JsonRpcMessage::response(id, serde_json::json!({}))),
             _ => Ok(JsonRpcMessage::error_response(
                 id,
                 -32601,
@@ -367,7 +517,11 @@ impl McpServer {
             } else {
                 Some(McpResourcesCapability::default())
             },
-            prompts: None,
+            prompts: if self.prompts.is_empty() {
+                None
+            } else {
+                Some(McpPromptsCapability::default())
+            },
         }
     }
 }
@@ -682,6 +836,76 @@ impl<T: McpTransport> McpClient for TransportMcpClient<T> {
         Ok(resp.result.unwrap_or_default())
     }
 
+    async fn list_prompts(&self) -> error::Result<Vec<McpPrompt>> {
+        let resp = self
+            .request("prompts/list", serde_json::json!({}))
+            .await?;
+        if let Some(err) = resp.error {
+            return Err(error::GaussError::tool(
+                "mcp",
+                format!("list_prompts error: {}", err.message),
+            ));
+        }
+        let result = resp.result.unwrap_or_default();
+        let prompts = result
+            .get("prompts")
+            .cloned()
+            .unwrap_or(serde_json::Value::Array(vec![]));
+        serde_json::from_value(prompts)
+            .map_err(|e| error::GaussError::tool("mcp", format!("Parse prompts: {e}")))
+    }
+
+    async fn get_prompt(
+        &self,
+        name: &str,
+        arguments: serde_json::Value,
+    ) -> error::Result<McpPromptResult> {
+        let resp = self
+            .request(
+                "prompts/get",
+                serde_json::json!({ "name": name, "arguments": arguments }),
+            )
+            .await?;
+        if let Some(err) = resp.error {
+            return Err(error::GaussError::tool(
+                "mcp",
+                format!("get_prompt error: {}", err.message),
+            ));
+        }
+        let result = resp.result.unwrap_or_default();
+        serde_json::from_value(result)
+            .map_err(|e| error::GaussError::tool("mcp", format!("Parse prompt result: {e}")))
+    }
+
+    async fn create_message(
+        &self,
+        request: McpSamplingRequest,
+    ) -> error::Result<McpSamplingResponse> {
+        let params = serde_json::to_value(&request)
+            .map_err(|e| error::GaussError::tool("mcp", format!("Serialize sampling: {e}")))?;
+        let resp = self.request("sampling/createMessage", params).await?;
+        if let Some(err) = resp.error {
+            return Err(error::GaussError::tool(
+                "mcp",
+                format!("create_message error: {}", err.message),
+            ));
+        }
+        let result = resp.result.unwrap_or_default();
+        serde_json::from_value(result)
+            .map_err(|e| error::GaussError::tool("mcp", format!("Parse sampling response: {e}")))
+    }
+
+    async fn ping(&self) -> error::Result<()> {
+        let resp = self.request("ping", serde_json::json!({})).await?;
+        if let Some(err) = resp.error {
+            return Err(error::GaussError::tool(
+                "mcp",
+                format!("ping error: {}", err.message),
+            ));
+        }
+        Ok(())
+    }
+
     async fn close(&mut self) -> error::Result<()> {
         self.transport.close().await
     }
@@ -821,5 +1045,324 @@ impl McpTransport for HttpTransport {
 
     async fn close(&self) -> error::Result<()> {
         Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mcp_tool_serde() {
+        let tool = McpTool {
+            name: "test".into(),
+            description: Some("A test tool".into()),
+            input_schema: serde_json::json!({"type": "object"}),
+        };
+        let json = serde_json::to_string(&tool).unwrap();
+        let parsed: McpTool = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.name, "test");
+        assert_eq!(parsed.description.as_deref(), Some("A test tool"));
+    }
+
+    #[test]
+    fn test_mcp_resource_serde() {
+        let res = McpResource {
+            uri: "file:///test.txt".into(),
+            name: "test.txt".into(),
+            description: Some("A test file".into()),
+            mime_type: Some("text/plain".into()),
+        };
+        let json = serde_json::to_string(&res).unwrap();
+        let parsed: McpResource = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.uri, "file:///test.txt");
+    }
+
+    #[test]
+    fn test_mcp_prompt_serde() {
+        let prompt = McpPrompt {
+            name: "summarize".into(),
+            description: Some("Summarize text".into()),
+            arguments: vec![McpPromptArgument {
+                name: "text".into(),
+                description: Some("Text to summarize".into()),
+                required: true,
+            }],
+        };
+        let json = serde_json::to_string(&prompt).unwrap();
+        let parsed: McpPrompt = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.name, "summarize");
+        assert_eq!(parsed.arguments.len(), 1);
+        assert_eq!(parsed.arguments[0].required, true);
+    }
+
+    #[test]
+    fn test_json_rpc_request() {
+        let msg = JsonRpcMessage::request(1, "tools/list", serde_json::json!({}));
+        assert_eq!(msg.method.as_deref(), Some("tools/list"));
+        assert_eq!(msg.id, Some(serde_json::json!(1)));
+    }
+
+    #[test]
+    fn test_json_rpc_response() {
+        let msg = JsonRpcMessage::response(
+            serde_json::json!(1),
+            serde_json::json!({"tools": []}),
+        );
+        assert!(msg.result.is_some());
+        assert!(msg.error.is_none());
+    }
+
+    #[test]
+    fn test_json_rpc_error_response() {
+        let msg = JsonRpcMessage::error_response(serde_json::json!(1), -32601, "Not found");
+        assert!(msg.error.is_some());
+        assert_eq!(msg.error.as_ref().unwrap().code, -32601);
+        assert_eq!(msg.error.as_ref().unwrap().message, "Not found");
+    }
+
+    #[test]
+    fn test_server_capabilities_default() {
+        let caps = McpServerCapabilities::default();
+        assert!(caps.tools.is_none());
+        assert!(caps.resources.is_none());
+        assert!(caps.prompts.is_none());
+    }
+
+    #[test]
+    fn test_mcp_content_text() {
+        let content = McpContent::Text { text: "hello".into() };
+        let json = serde_json::to_string(&content).unwrap();
+        assert!(json.contains("\"type\":\"text\""));
+        assert!(json.contains("hello"));
+    }
+
+    #[test]
+    fn test_mcp_content_image() {
+        let content = McpContent::Image {
+            data: "base64data".into(),
+            mime_type: "image/png".into(),
+        };
+        let json = serde_json::to_string(&content).unwrap();
+        assert!(json.contains("\"type\":\"image\""));
+    }
+
+    #[test]
+    fn test_sampling_request_serde() {
+        let req = McpSamplingRequest {
+            messages: vec![McpSamplingMessage {
+                role: "user".into(),
+                content: McpContent::Text { text: "Hello".into() },
+            }],
+            model_preferences: None,
+            system_prompt: Some("You are helpful".into()),
+            include_context: None,
+            temperature: Some(0.7),
+            max_tokens: 1000,
+            stop_sequences: None,
+            metadata: None,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let parsed: McpSamplingRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.messages.len(), 1);
+        assert_eq!(parsed.max_tokens, 1000);
+        assert_eq!(parsed.temperature, Some(0.7));
+    }
+
+    #[test]
+    fn test_sampling_response_serde() {
+        let resp = McpSamplingResponse {
+            role: "assistant".into(),
+            content: McpContent::Text { text: "Response".into() },
+            model: "gpt-4".into(),
+            stop_reason: Some("end_turn".into()),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let parsed: McpSamplingResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.model, "gpt-4");
+        assert_eq!(parsed.stop_reason.as_deref(), Some("end_turn"));
+    }
+
+    #[test]
+    fn test_prompt_result_serde() {
+        let result = McpPromptResult {
+            description: Some("Test prompt".into()),
+            messages: vec![McpPromptMessage {
+                role: "user".into(),
+                content: McpContent::Text { text: "Hello".into() },
+            }],
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let parsed: McpPromptResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.messages.len(), 1);
+    }
+
+    #[test]
+    fn test_model_preferences_serde() {
+        let prefs = McpModelPreferences {
+            hints: Some(vec![McpModelHint {
+                name: Some("claude-3".into()),
+            }]),
+            cost_priority: Some(0.3),
+            speed_priority: Some(0.5),
+            intelligence_priority: Some(0.8),
+        };
+        let json = serde_json::to_string(&prefs).unwrap();
+        assert!(json.contains("costPriority"));
+        assert!(json.contains("speedPriority"));
+        assert!(json.contains("intelligencePriority"));
+    }
+
+    #[test]
+    fn test_mcp_tool_to_gauss_roundtrip() {
+        let mcp_tool = McpTool {
+            name: "calculator".into(),
+            description: Some("Does math".into()),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "expression": { "type": "string" }
+                },
+                "required": ["expression"]
+            }),
+        };
+        let gauss_tool = mcp_tool_to_gauss(&mcp_tool);
+        assert_eq!(gauss_tool.name, "calculator");
+        assert_eq!(gauss_tool.description, "Does math");
+
+        let back = gauss_tool_to_mcp(&gauss_tool);
+        assert_eq!(back.name, "calculator");
+    }
+
+    #[test]
+    fn test_server_add_prompt() {
+        let mut server = McpServer::new("test", "1.0");
+        assert!(server.prompts.is_empty());
+        server.add_prompt(McpPrompt {
+            name: "greet".into(),
+            description: Some("A greeting".into()),
+            arguments: vec![],
+        });
+        assert_eq!(server.prompts.len(), 1);
+        let caps = server.capabilities();
+        assert!(caps.prompts.is_some());
+    }
+
+    #[test]
+    fn test_server_capabilities_with_all() {
+        let mut server = McpServer::new("test", "1.0");
+        server.add_tool(Tool::builder("t1", "Test tool").build());
+        server.add_resource(McpResource {
+            uri: "test://res".into(),
+            name: "res".into(),
+            description: None,
+            mime_type: None,
+        });
+        server.add_prompt(McpPrompt {
+            name: "p1".into(),
+            description: None,
+            arguments: vec![],
+        });
+        let caps = server.capabilities();
+        assert!(caps.tools.is_some());
+        assert!(caps.resources.is_some());
+        assert!(caps.prompts.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_server_handle_initialize() {
+        let server = McpServer::new("test", "1.0");
+        let msg = JsonRpcMessage::request(1, "initialize", serde_json::json!({
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": { "name": "test", "version": "1.0" }
+        }));
+        let resp = server.handle_message(msg).await.unwrap();
+        assert!(resp.result.is_some());
+        let result = resp.result.unwrap();
+        assert_eq!(result["protocolVersion"], "2024-11-05");
+    }
+
+    #[tokio::test]
+    async fn test_server_handle_tools_list() {
+        let mut server = McpServer::new("test", "1.0");
+        server.add_tool(Tool::builder("calc", "Calculator").build());
+        let msg = JsonRpcMessage::request(2, "tools/list", serde_json::json!({}));
+        let resp = server.handle_message(msg).await.unwrap();
+        let tools = resp.result.unwrap()["tools"].as_array().unwrap().len();
+        assert_eq!(tools, 1);
+    }
+
+    #[tokio::test]
+    async fn test_server_handle_prompts_list() {
+        let mut server = McpServer::new("test", "1.0");
+        server.add_prompt(McpPrompt {
+            name: "greet".into(),
+            description: Some("Greet user".into()),
+            arguments: vec![],
+        });
+        let msg = JsonRpcMessage::request(3, "prompts/list", serde_json::json!({}));
+        let resp = server.handle_message(msg).await.unwrap();
+        let prompts = resp.result.unwrap()["prompts"].as_array().unwrap().len();
+        assert_eq!(prompts, 1);
+    }
+
+    #[tokio::test]
+    async fn test_server_handle_prompts_get() {
+        let mut server = McpServer::new("test", "1.0");
+        server.add_prompt(McpPrompt {
+            name: "greet".into(),
+            description: Some("Greet user".into()),
+            arguments: vec![],
+        });
+        let msg = JsonRpcMessage::request(4, "prompts/get", serde_json::json!({"name": "greet"}));
+        let resp = server.handle_message(msg).await.unwrap();
+        assert!(resp.result.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_server_handle_prompts_get_not_found() {
+        let server = McpServer::new("test", "1.0");
+        let msg = JsonRpcMessage::request(5, "prompts/get", serde_json::json!({"name": "unknown"}));
+        let resp = server.handle_message(msg).await.unwrap();
+        assert!(resp.error.is_some());
+        assert_eq!(resp.error.unwrap().code, -32602);
+    }
+
+    #[tokio::test]
+    async fn test_server_handle_ping() {
+        let server = McpServer::new("test", "1.0");
+        let msg = JsonRpcMessage::request(6, "ping", serde_json::json!({}));
+        let resp = server.handle_message(msg).await.unwrap();
+        assert!(resp.result.is_some());
+        assert!(resp.error.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_server_handle_unknown_method() {
+        let server = McpServer::new("test", "1.0");
+        let msg = JsonRpcMessage::request(7, "unknown/method", serde_json::json!({}));
+        let resp = server.handle_message(msg).await.unwrap();
+        assert!(resp.error.is_some());
+        assert_eq!(resp.error.unwrap().code, -32601);
+    }
+
+    #[tokio::test]
+    async fn test_server_handle_resources_list() {
+        let mut server = McpServer::new("test", "1.0");
+        server.add_resource(McpResource {
+            uri: "test://file".into(),
+            name: "file".into(),
+            description: None,
+            mime_type: None,
+        });
+        let msg = JsonRpcMessage::request(8, "resources/list", serde_json::json!({}));
+        let resp = server.handle_message(msg).await.unwrap();
+        let resources = resp.result.unwrap()["resources"].as_array().unwrap().len();
+        assert_eq!(resources, 1);
     }
 }

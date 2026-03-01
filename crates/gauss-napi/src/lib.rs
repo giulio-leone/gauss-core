@@ -1306,6 +1306,34 @@ pub fn mcp_server_add_tool(handle: u32, tool_json: String) -> Result<()> {
     Ok(())
 }
 
+/// Add a resource to an MCP server.
+#[napi]
+pub fn mcp_server_add_resource(handle: u32, resource_json: String) -> Result<()> {
+    let resource: mcp::McpResource = serde_json::from_str(&resource_json)
+        .map_err(|e| napi::Error::from_reason(format!("Invalid resource: {e}")))?;
+    let reg = mcp_server_registry();
+    let guard = reg.lock().expect("registry mutex poisoned");
+    let server = guard
+        .get(&handle)
+        .ok_or_else(|| napi::Error::from_reason("McpServer not found"))?;
+    server.blocking_lock().add_resource(resource);
+    Ok(())
+}
+
+/// Add a prompt to an MCP server.
+#[napi]
+pub fn mcp_server_add_prompt(handle: u32, prompt_json: String) -> Result<()> {
+    let prompt: mcp::McpPrompt = serde_json::from_str(&prompt_json)
+        .map_err(|e| napi::Error::from_reason(format!("Invalid prompt: {e}")))?;
+    let reg = mcp_server_registry();
+    let guard = reg.lock().expect("registry mutex poisoned");
+    let server = guard
+        .get(&handle)
+        .ok_or_else(|| napi::Error::from_reason("McpServer not found"))?;
+    server.blocking_lock().add_prompt(prompt);
+    Ok(())
+}
+
 /// Handle an incoming JSON-RPC message. Returns the response JSON.
 #[napi]
 pub async fn mcp_server_handle(handle: u32, message_json: String) -> Result<serde_json::Value> {

@@ -648,6 +648,32 @@ fn mcp_server_add_tool(handle: u32, tool_json: String) -> PyResult<()> {
 }
 
 #[pyfunction]
+fn mcp_server_add_resource(handle: u32, resource_json: String) -> PyResult<()> {
+    let server = mcp_servers()
+        .lock()
+        .unwrap()
+        .get(&handle)
+        .cloned()
+        .ok_or_else(|| py_err("McpServer not found"))?;
+    let resource: mcp::McpResource = serde_json::from_str(&resource_json).map_err(py_err)?;
+    server.blocking_lock().add_resource(resource);
+    Ok(())
+}
+
+#[pyfunction]
+fn mcp_server_add_prompt(handle: u32, prompt_json: String) -> PyResult<()> {
+    let server = mcp_servers()
+        .lock()
+        .unwrap()
+        .get(&handle)
+        .cloned()
+        .ok_or_else(|| py_err("McpServer not found"))?;
+    let prompt: mcp::McpPrompt = serde_json::from_str(&prompt_json).map_err(py_err)?;
+    server.blocking_lock().add_prompt(prompt);
+    Ok(())
+}
+
+#[pyfunction]
 fn mcp_server_handle(
     py: Python<'_>,
     handle: u32,
@@ -2409,6 +2435,8 @@ fn gauss_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // MCP
     m.add_function(wrap_pyfunction!(create_mcp_server, m)?)?;
     m.add_function(wrap_pyfunction!(mcp_server_add_tool, m)?)?;
+    m.add_function(wrap_pyfunction!(mcp_server_add_resource, m)?)?;
+    m.add_function(wrap_pyfunction!(mcp_server_add_prompt, m)?)?;
     m.add_function(wrap_pyfunction!(mcp_server_handle, m)?)?;
     m.add_function(wrap_pyfunction!(destroy_mcp_server, m)?)?;
     // Network

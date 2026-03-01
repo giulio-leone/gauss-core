@@ -183,6 +183,8 @@ export function cosine_similarity(a: number[], b: number[]): number
 
 export function create_mcp_server(name: string, versionStr: string): number
 export function mcp_server_add_tool(handle: number, toolJson: string): void
+export function mcpServerAddResource(handle: number, resourceJson: string): void
+export function mcpServerAddPrompt(handle: number, promptJson: string): void
 export function mcp_server_handle(handle: number, messageJson: string): Promise<any>
 export function destroy_mcp_server(handle: number): void
 
