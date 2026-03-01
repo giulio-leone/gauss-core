@@ -391,3 +391,12 @@ export function a2aAsk(baseUrl: string, authToken?: string | null, text: string)
 export function a2aGetTask(baseUrl: string, authToken?: string | null, taskId: string, historyLength?: number | null): Promise<any>
 export function a2aCancelTask(baseUrl: string, authToken?: string | null, taskId: string): Promise<any>
 export function a2aHandleRequest(agentCardJson: string, requestBody: string): Promise<string>
+
+// ============ Tool Registry ============
+
+export function createToolRegistry(): number
+export function toolRegistryAdd(handle: number, toolJson: string): void
+export function toolRegistrySearch(handle: number, query: string): any
+export function toolRegistryByTag(handle: number, tag: string): any
+export function toolRegistryList(handle: number): any
+export function destroyToolRegistry(handle: number): void

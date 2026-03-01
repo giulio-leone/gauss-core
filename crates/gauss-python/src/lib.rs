@@ -2170,6 +2170,147 @@ fn destroy_team(handle: u32) -> PyResult<()> {
     Ok(())
 }
 
+// ============ Tool Registry ============
+
+use gauss_core::tool::{
+    ToolExample as RustToolExample, ToolRegistry as RustToolRegistry,
+};
+
+fn tool_registries() -> &'static Mutex<HashMap<u32, RustToolRegistry>> {
+    use std::sync::OnceLock;
+    static REG: OnceLock<Mutex<HashMap<u32, RustToolRegistry>>> = OnceLock::new();
+    REG.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[pyfunction]
+fn create_tool_registry() -> u32 {
+    static COUNTER: AtomicU32 = AtomicU32::new(1);
+    let handle = COUNTER.fetch_add(1, Ordering::Relaxed);
+    tool_registries()
+        .lock()
+        .unwrap()
+        .insert(handle, RustToolRegistry::new());
+    handle
+}
+
+#[pyfunction]
+fn tool_registry_add(handle: u32, tool_json: String) -> PyResult<()> {
+    let v: serde_json::Value = serde_json::from_str(&tool_json).map_err(py_err)?;
+    let name = v["name"]
+        .as_str()
+        .ok_or_else(|| py_err("Missing 'name'"))?
+        .to_string();
+    let description = v["description"]
+        .as_str()
+        .ok_or_else(|| py_err("Missing 'description'"))?
+        .to_string();
+    let tags: Vec<String> = v["tags"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|t| t.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let examples: Vec<RustToolExample> = v["examples"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|e| {
+                    Some(RustToolExample {
+                        description: e["description"].as_str()?.to_string(),
+                        input: e["input"].clone(),
+                        expected_output: e.get("expectedOutput").cloned(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut builder = gauss_core::tool::Tool::builder(&name, &description).tags(tags);
+    for ex in examples {
+        builder = builder.example(ex);
+    }
+    let tool = builder.build();
+    tool_registries()
+        .lock()
+        .unwrap()
+        .get_mut(&handle)
+        .ok_or_else(|| py_err("ToolRegistry not found"))?
+        .register(tool);
+    Ok(())
+}
+
+#[pyfunction]
+fn tool_registry_search(handle: u32, query: String) -> PyResult<String> {
+    let reg = tool_registries().lock().unwrap();
+    let registry = reg
+        .get(&handle)
+        .ok_or_else(|| py_err("ToolRegistry not found"))?;
+    let results: Vec<serde_json::Value> = registry
+        .search(&query)
+        .iter()
+        .map(|t| {
+            serde_json::json!({
+                "name": t.name,
+                "description": t.description,
+                "tags": t.tags,
+            })
+        })
+        .collect();
+    serde_json::to_string(&results).map_err(py_err)
+}
+
+#[pyfunction]
+fn tool_registry_by_tag(handle: u32, tag: String) -> PyResult<String> {
+    let reg = tool_registries().lock().unwrap();
+    let registry = reg
+        .get(&handle)
+        .ok_or_else(|| py_err("ToolRegistry not found"))?;
+    let results: Vec<serde_json::Value> = registry
+        .by_tag(&tag)
+        .iter()
+        .map(|t| {
+            serde_json::json!({
+                "name": t.name,
+                "description": t.description,
+                "tags": t.tags,
+            })
+        })
+        .collect();
+    serde_json::to_string(&results).map_err(py_err)
+}
+
+#[pyfunction]
+fn tool_registry_list(handle: u32) -> PyResult<String> {
+    let reg = tool_registries().lock().unwrap();
+    let registry = reg
+        .get(&handle)
+        .ok_or_else(|| py_err("ToolRegistry not found"))?;
+    let results: Vec<serde_json::Value> = registry
+        .list()
+        .iter()
+        .map(|t| {
+            serde_json::json!({
+                "name": t.name,
+                "description": t.description,
+                "tags": t.tags,
+                "examples": t.examples,
+            })
+        })
+        .collect();
+    serde_json::to_string(&results).map_err(py_err)
+}
+
+#[pyfunction]
+fn destroy_tool_registry(handle: u32) -> PyResult<()> {
+    tool_registries()
+        .lock()
+        .unwrap()
+        .remove(&handle)
+        .ok_or_else(|| py_err("ToolRegistry not found"))?;
+    Ok(())
+}
+
 // ============ Code Execution (PTC) ============
 
 #[pyfunction]
@@ -2527,6 +2668,13 @@ fn gauss_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(team_set_strategy, m)?)?;
     m.add_function(wrap_pyfunction!(team_run, m)?)?;
     m.add_function(wrap_pyfunction!(destroy_team, m)?)?;
+    // Tool Registry
+    m.add_function(wrap_pyfunction!(create_tool_registry, m)?)?;
+    m.add_function(wrap_pyfunction!(tool_registry_add, m)?)?;
+    m.add_function(wrap_pyfunction!(tool_registry_search, m)?)?;
+    m.add_function(wrap_pyfunction!(tool_registry_by_tag, m)?)?;
+    m.add_function(wrap_pyfunction!(tool_registry_list, m)?)?;
+    m.add_function(wrap_pyfunction!(destroy_tool_registry, m)?)?;
     // Code Execution (PTC)
     m.add_function(wrap_pyfunction!(execute_code, m)?)?;
     m.add_function(wrap_pyfunction!(available_runtimes, m)?)?;
