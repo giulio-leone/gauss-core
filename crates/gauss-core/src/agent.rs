@@ -47,6 +47,8 @@ pub struct AgentOutput {
     pub steps: usize,
     pub step_results: Vec<StepResult>,
     pub structured_output: Option<serde_json::Value>,
+    /// Aggregated thinking output from extended thinking (Anthropic).
+    pub thinking: Option<String>,
 }
 
 /// Result from a single agent step.
@@ -178,6 +180,7 @@ impl Agent {
         let mut all_messages = Vec::new();
         let mut total_usage = Usage::default();
         let mut step_results = Vec::new();
+        let mut thinking_parts: Vec<String> = Vec::new();
 
         if let Some(ref instructions) = self.instructions {
             all_messages.push(Message::system(instructions.clone()));
@@ -191,6 +194,10 @@ impl Agent {
                 .provider
                 .generate(&all_messages, &self.tools, &self.options)
                 .await?;
+
+            if let Some(ref t) = result.thinking {
+                thinking_parts.push(t.clone());
+            }
 
             total_usage.input_tokens += result.usage.input_tokens;
             total_usage.output_tokens += result.usage.output_tokens;
@@ -326,6 +333,11 @@ impl Agent {
             steps: step_results.len(),
             step_results,
             structured_output,
+            thinking: if thinking_parts.is_empty() {
+                None
+            } else {
+                Some(thinking_parts.join("\n\n"))
+            },
         })
     }
 
@@ -642,6 +654,11 @@ impl AgentBuilder {
 
     pub fn output_schema(mut self, schema: serde_json::Value) -> Self {
         self.options.output_schema = Some(schema);
+        self
+    }
+
+    pub fn thinking_budget(mut self, budget: u32) -> Self {
+        self.options.thinking_budget = Some(budget);
         self
     }
 

@@ -314,6 +314,7 @@ impl OpenAiProvider {
                 .get("system_fingerprint")
                 .cloned()
                 .unwrap_or(json!(null)),
+            thinking: None,
         })
     }
 }

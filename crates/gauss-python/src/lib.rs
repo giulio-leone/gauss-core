@@ -132,13 +132,14 @@ fn parse_messages(messages_json: &str) -> PyResult<Vec<RustMessage>> {
 
 /// Call generate. Returns JSON string.
 #[pyfunction]
-#[pyo3(signature = (provider_handle, messages_json, temperature=None, max_tokens=None))]
+#[pyo3(signature = (provider_handle, messages_json, temperature=None, max_tokens=None, thinking_budget=None))]
 fn generate(
     py: Python<'_>,
     provider_handle: u32,
     messages_json: String,
     temperature: Option<f64>,
     max_tokens: Option<u32>,
+    thinking_budget: Option<u32>,
 ) -> PyResult<Bound<'_, pyo3::types::PyAny>> {
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
         let provider = get_provider(provider_handle)?;
@@ -147,6 +148,7 @@ fn generate(
         let opts = GenerateOptions {
             temperature,
             max_tokens,
+            thinking_budget,
             ..GenerateOptions::default()
         };
 
@@ -159,6 +161,7 @@ fn generate(
 
         let output = json!({
             "text": text,
+            "thinking": result.thinking,
             "usage": {
                 "input_tokens": result.usage.input_tokens,
                 "output_tokens": result.usage.output_tokens,
@@ -256,6 +259,9 @@ fn agent_run(
             if let Some(schema) = opts.get("output_schema").filter(|s| !s.is_null()) {
                 builder = builder.output_schema(schema.clone());
             }
+            if let Some(budget) = opts["thinking_budget"].as_u64() {
+                builder = builder.thinking_budget(budget as u32);
+            }
         }
 
         let agent = builder.build();
@@ -266,6 +272,7 @@ fn agent_run(
 
         let result = json!({
             "text": output.text,
+            "thinking": output.thinking,
             "steps": output.steps,
             "usage": {
                 "input_tokens": output.usage.input_tokens,

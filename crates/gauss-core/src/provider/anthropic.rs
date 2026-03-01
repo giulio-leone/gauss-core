@@ -144,6 +144,14 @@ impl AnthropicProvider {
             body["metadata"] = json!({"output_schema": schema});
         }
 
+        // Extended thinking
+        if let Some(budget) = options.thinking_budget {
+            body["thinking"] = json!({
+                "type": "enabled",
+                "budget_tokens": budget
+            });
+        }
+
         (system_text, body)
     }
 
@@ -197,10 +205,16 @@ impl AnthropicProvider {
 
     fn parse_response(&self, body: &serde_json::Value) -> crate::error::Result<GenerateResult> {
         let mut content = Vec::new();
+        let mut thinking_text: Option<String> = None;
 
         if let Some(blocks) = body["content"].as_array() {
             for block in blocks {
                 match block["type"].as_str() {
+                    Some("thinking") => {
+                        if let Some(t) = block["thinking"].as_str() {
+                            thinking_text = Some(t.to_string());
+                        }
+                    }
                     Some("text") => {
                         if let Some(text) = block["text"].as_str() {
                             content.push(Content::Text {
@@ -248,6 +262,7 @@ impl AnthropicProvider {
             usage,
             finish_reason,
             provider_metadata: body.get("id").cloned().unwrap_or(json!(null)),
+            thinking: thinking_text,
         })
     }
 }
@@ -407,6 +422,13 @@ impl Provider for AnthropicProvider {
                                                     name: None,
                                                     arguments_delta: Some(json.to_string()),
                                                 }));
+                                            }
+                                        }
+                                        Some("thinking_delta") => {
+                                            if let Some(thinking) = delta["thinking"].as_str() {
+                                                events.push(Ok(StreamEvent::ReasoningDelta(
+                                                    thinking.to_string(),
+                                                )));
                                             }
                                         }
                                         _ => {}

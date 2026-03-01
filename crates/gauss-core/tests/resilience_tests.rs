@@ -47,6 +47,7 @@ impl Provider for FailThenSucceed {
                 usage: Usage::default(),
                 finish_reason: FinishReason::Stop,
                 provider_metadata: serde_json::json!({}),
+                thinking: None,
             })
         }
     }
@@ -137,6 +138,7 @@ impl Provider for AlwaysSucceeds {
             usage: Usage::default(),
             finish_reason: FinishReason::Stop,
             provider_metadata: serde_json::json!({}),
+            thinking: None,
         })
     }
 

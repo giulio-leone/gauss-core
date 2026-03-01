@@ -46,6 +46,9 @@ pub struct GenerateOptions {
     pub tool_choice: Option<ToolChoice>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_schema: Option<serde_json::Value>,
+    /// Anthropic extended thinking: budget in tokens for internal reasoning.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_budget: Option<u32>,
 }
 
 /// Provider configuration.
@@ -89,6 +92,8 @@ pub struct GenerateResult {
     pub usage: Usage,
     pub finish_reason: FinishReason,
     pub provider_metadata: serde_json::Value,
+    /// Anthropic extended thinking output (if enabled).
+    pub thinking: Option<String>,
 }
 
 impl GenerateResult {

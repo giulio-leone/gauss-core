@@ -228,6 +228,7 @@ impl GoogleProvider {
             usage,
             finish_reason,
             provider_metadata: body.get("modelVersion").cloned().unwrap_or(json!(null)),
+            thinking: None,
         })
     }
 }

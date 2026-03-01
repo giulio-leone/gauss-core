@@ -169,6 +169,7 @@ pub struct AgentOptions {
     pub seed: Option<f64>,
     pub stop_on_tool: Option<String>,
     pub output_schema: Option<serde_json::Value>,
+    pub thinking_budget: Option<u32>,
 }
 
 // ============ Agent Output ============
@@ -180,6 +181,7 @@ pub struct AgentResult {
     pub input_tokens: u32,
     pub output_tokens: u32,
     pub structured_output: Option<serde_json::Value>,
+    pub thinking: Option<String>,
 }
 
 fn rust_output_to_js(output: RustAgentOutput) -> AgentResult {
@@ -189,6 +191,7 @@ fn rust_output_to_js(output: RustAgentOutput) -> AgentResult {
         input_tokens: output.usage.input_tokens as u32,
         output_tokens: output.usage.output_tokens as u32,
         structured_output: output.structured_output,
+        thinking: output.thinking,
     }
 }
 
@@ -213,6 +216,7 @@ pub async fn agent_run(
         seed: None,
         stop_on_tool: None,
         output_schema: None,
+        thinking_budget: None,
     });
 
     let mut builder = RustAgent::builder(name, provider);
@@ -240,6 +244,9 @@ pub async fn agent_run(
     }
     if let Some(tool_name) = opts.stop_on_tool {
         builder = builder.stop_when(StopCondition::HasToolCall(tool_name));
+    }
+    if let Some(budget) = opts.thinking_budget {
+        builder = builder.thinking_budget(budget);
     }
 
     for td in &tools {
@@ -288,6 +295,7 @@ pub async fn agent_run_with_tool_executor(
         seed: None,
         stop_on_tool: None,
         output_schema: None,
+        thinking_budget: None,
     });
 
     let mut builder = RustAgent::builder(name, provider);
@@ -315,6 +323,9 @@ pub async fn agent_run_with_tool_executor(
     }
     if let Some(tool_name) = opts.stop_on_tool {
         builder = builder.stop_when(StopCondition::HasToolCall(tool_name));
+    }
+    if let Some(budget) = opts.thinking_budget {
+        builder = builder.thinking_budget(budget);
     }
 
     let tool_executor = Arc::new(tool_executor);
@@ -401,6 +412,7 @@ pub async fn agent_stream_with_tool_executor(
         seed: None,
         stop_on_tool: None,
         output_schema: None,
+        thinking_budget: None,
     });
 
     let mut builder = RustAgent::builder(name, provider);
@@ -428,6 +440,9 @@ pub async fn agent_stream_with_tool_executor(
     }
     if let Some(tool_name) = opts.stop_on_tool {
         builder = builder.stop_when(StopCondition::HasToolCall(tool_name));
+    }
+    if let Some(budget) = opts.thinking_budget {
+        builder = builder.thinking_budget(budget);
     }
 
     let tool_executor = Arc::new(tool_executor);
@@ -609,6 +624,7 @@ pub async fn agent_stream_with_tool_executor(
         input_tokens: final_input_tokens,
         output_tokens: final_output_tokens,
         structured_output: None,
+        thinking: None,
     })
 }
 
@@ -621,6 +637,7 @@ pub async fn generate(
     messages: Vec<JsMessage>,
     temperature: Option<f64>,
     max_tokens: Option<u32>,
+    thinking_budget: Option<u32>,
 ) -> Result<serde_json::Value> {
     let provider = get_provider(provider_handle)?;
     let rust_msgs: Vec<RustMessage> = messages.iter().map(js_message_to_rust).collect();
@@ -628,6 +645,7 @@ pub async fn generate(
     let opts = GenerateOptions {
         temperature,
         max_tokens,
+        thinking_budget,
         ..GenerateOptions::default()
     };
 
@@ -640,6 +658,7 @@ pub async fn generate(
 
     Ok(json!({
         "text": text,
+        "thinking": result.thinking,
         "usage": {
             "inputTokens": result.usage.input_tokens,
             "outputTokens": result.usage.output_tokens,
