@@ -669,6 +669,11 @@ impl AgentBuilder {
         self
     }
 
+    pub fn cache_control(mut self, enabled: bool) -> Self {
+        self.options.cache_control = enabled;
+        self
+    }
+
     pub fn build(self) -> Agent {
         Agent {
             name: self.name,

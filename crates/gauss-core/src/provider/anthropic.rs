@@ -39,7 +39,7 @@ impl AnthropicProvider {
         messages: &[Message],
         tools: &[Tool],
         options: &GenerateOptions,
-    ) -> (Option<String>, serde_json::Value) {
+    ) -> (Option<serde_json::Value>, serde_json::Value) {
         // Extract system message separately (Anthropic uses top-level `system`)
         let mut system_text: Option<String> = None;
         let api_messages: Vec<serde_json::Value> = messages
@@ -97,6 +97,19 @@ impl AnthropicProvider {
             })
             .collect();
 
+        // Build system value — use array format when cache_control is enabled
+        let system_val: Option<serde_json::Value> = system_text.map(|text| {
+            if options.cache_control {
+                json!([{
+                    "type": "text",
+                    "text": text,
+                    "cache_control": {"type": "ephemeral"}
+                }])
+            } else {
+                json!(text)
+            }
+        });
+
         let mut body = json!({
             "model": self.model,
             "messages": api_messages,
@@ -104,16 +117,23 @@ impl AnthropicProvider {
         });
 
         if !tools.is_empty() {
-            body["tools"] = json!(
-                tools
-                    .iter()
-                    .map(|t| json!({
-                        "name": t.name,
-                        "description": t.description,
-                        "input_schema": t.parameters,
-                    }))
-                    .collect::<Vec<_>>()
-            );
+            let mut tool_defs: Vec<serde_json::Value> = tools
+                .iter()
+                .map(|t| json!({
+                    "name": t.name,
+                    "description": t.description,
+                    "input_schema": t.parameters,
+                }))
+                .collect();
+
+            // Add cache_control to the last tool definition
+            if options.cache_control {
+                if let Some(last) = tool_defs.last_mut() {
+                    last["cache_control"] = json!({"type": "ephemeral"});
+                }
+            }
+
+            body["tools"] = json!(tool_defs);
 
             if let Some(ref tc) = options.tool_choice {
                 body["tool_choice"] = match tc {
@@ -152,7 +172,7 @@ impl AnthropicProvider {
             });
         }
 
-        (system_text, body)
+        (system_val, body)
     }
 
     fn convert_content(&self, content: &[Content]) -> serde_json::Value {
@@ -303,9 +323,9 @@ impl AnthropicProvider {
         let usage = Usage {
             input_tokens: body["usage"]["input_tokens"].as_u64().unwrap_or(0),
             output_tokens: body["usage"]["output_tokens"].as_u64().unwrap_or(0),
-            reasoning_tokens: body["usage"]["cache_creation_input_tokens"].as_u64(),
+            reasoning_tokens: None,
             cache_read_tokens: body["usage"]["cache_read_input_tokens"].as_u64(),
-            cache_creation_tokens: None,
+            cache_creation_tokens: body["usage"]["cache_creation_input_tokens"].as_u64(),
         };
 
         Ok(GenerateResult {
@@ -344,7 +364,7 @@ impl Provider for AnthropicProvider {
         let (system, mut body) = self.build_request_body(messages, tools, options);
 
         if let Some(sys) = system {
-            body["system"] = json!(sys);
+            body["system"] = sys;
         }
 
         debug!(model = %self.model, url = %url, "Anthropic generate");
@@ -406,7 +426,7 @@ impl Provider for AnthropicProvider {
         let (system, mut body) = self.build_request_body(messages, tools, options);
 
         if let Some(sys) = system {
-            body["system"] = json!(sys);
+            body["system"] = sys;
         }
         body["stream"] = json!(true);
 

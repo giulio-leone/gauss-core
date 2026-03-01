@@ -170,6 +170,7 @@ pub struct AgentOptions {
     pub stop_on_tool: Option<String>,
     pub output_schema: Option<serde_json::Value>,
     pub thinking_budget: Option<u32>,
+    pub cache_control: Option<bool>,
 }
 
 // ============ Agent Output ============
@@ -242,6 +243,7 @@ pub async fn agent_run(
         stop_on_tool: None,
         output_schema: None,
         thinking_budget: None,
+        cache_control: None,
     });
 
     let mut builder = RustAgent::builder(name, provider);
@@ -272,6 +274,9 @@ pub async fn agent_run(
     }
     if let Some(budget) = opts.thinking_budget {
         builder = builder.thinking_budget(budget);
+    }
+    if let Some(true) = opts.cache_control {
+        builder = builder.cache_control(true);
     }
 
     for td in &tools {
@@ -321,6 +326,7 @@ pub async fn agent_run_with_tool_executor(
         stop_on_tool: None,
         output_schema: None,
         thinking_budget: None,
+        cache_control: None,
     });
 
     let mut builder = RustAgent::builder(name, provider);
@@ -351,6 +357,9 @@ pub async fn agent_run_with_tool_executor(
     }
     if let Some(budget) = opts.thinking_budget {
         builder = builder.thinking_budget(budget);
+    }
+    if let Some(true) = opts.cache_control {
+        builder = builder.cache_control(true);
     }
 
     let tool_executor = Arc::new(tool_executor);
@@ -438,6 +447,7 @@ pub async fn agent_stream_with_tool_executor(
         stop_on_tool: None,
         output_schema: None,
         thinking_budget: None,
+        cache_control: None,
     });
 
     let mut builder = RustAgent::builder(name, provider);
@@ -468,6 +478,9 @@ pub async fn agent_stream_with_tool_executor(
     }
     if let Some(budget) = opts.thinking_budget {
         builder = builder.thinking_budget(budget);
+    }
+    if let Some(true) = opts.cache_control {
+        builder = builder.cache_control(true);
     }
 
     let tool_executor = Arc::new(tool_executor);
@@ -664,6 +677,7 @@ pub async fn generate(
     temperature: Option<f64>,
     max_tokens: Option<u32>,
     thinking_budget: Option<u32>,
+    cache_control: Option<bool>,
 ) -> Result<serde_json::Value> {
     let provider = get_provider(provider_handle)?;
     let rust_msgs: Vec<RustMessage> = messages.iter().map(js_message_to_rust).collect();
@@ -672,6 +686,7 @@ pub async fn generate(
         temperature,
         max_tokens,
         thinking_budget,
+        cache_control: cache_control.unwrap_or(false),
         ..GenerateOptions::default()
     };
 
@@ -697,6 +712,8 @@ pub async fn generate(
         "usage": {
             "inputTokens": result.usage.input_tokens,
             "outputTokens": result.usage.output_tokens,
+            "cacheReadTokens": result.usage.cache_read_tokens,
+            "cacheCreationTokens": result.usage.cache_creation_tokens,
         },
         "finishReason": format!("{:?}", result.finish_reason),
     }))

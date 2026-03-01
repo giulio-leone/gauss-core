@@ -49,6 +49,9 @@ pub struct GenerateOptions {
     /// Anthropic extended thinking: budget in tokens for internal reasoning.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_budget: Option<u32>,
+    /// Enable prompt caching (Anthropic). Auto-annotates system messages and tools with cache_control.
+    #[serde(default)]
+    pub cache_control: bool,
 }
 
 /// Provider configuration.

@@ -132,7 +132,7 @@ fn parse_messages(messages_json: &str) -> PyResult<Vec<RustMessage>> {
 
 /// Call generate. Returns JSON string.
 #[pyfunction]
-#[pyo3(signature = (provider_handle, messages_json, temperature=None, max_tokens=None, thinking_budget=None))]
+#[pyo3(signature = (provider_handle, messages_json, temperature=None, max_tokens=None, thinking_budget=None, cache_control=None))]
 fn generate(
     py: Python<'_>,
     provider_handle: u32,
@@ -140,6 +140,7 @@ fn generate(
     temperature: Option<f64>,
     max_tokens: Option<u32>,
     thinking_budget: Option<u32>,
+    cache_control: Option<bool>,
 ) -> PyResult<Bound<'_, pyo3::types::PyAny>> {
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
         let provider = get_provider(provider_handle)?;
@@ -149,6 +150,7 @@ fn generate(
             temperature,
             max_tokens,
             thinking_budget,
+            cache_control: cache_control.unwrap_or(false),
             ..GenerateOptions::default()
         };
 
@@ -174,6 +176,8 @@ fn generate(
             "usage": {
                 "input_tokens": result.usage.input_tokens,
                 "output_tokens": result.usage.output_tokens,
+                "cache_read_tokens": result.usage.cache_read_tokens,
+                "cache_creation_tokens": result.usage.cache_creation_tokens,
             },
             "finish_reason": format!("{:?}", result.finish_reason),
         });
@@ -270,6 +274,9 @@ fn agent_run(
             }
             if let Some(budget) = opts["thinking_budget"].as_u64() {
                 builder = builder.thinking_budget(budget as u32);
+            }
+            if opts["cache_control"].as_bool().unwrap_or(false) {
+                builder = builder.cache_control(true);
             }
         }
 
