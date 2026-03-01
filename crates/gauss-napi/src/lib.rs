@@ -2244,6 +2244,37 @@ pub fn agent_config_resolve_env(value: String) -> String {
     gauss_core::config::resolve_env(&value)
 }
 
+// ---------------------------------------------------------------------------
+// AGENTS.MD & SKILL.MD Parsers
+// ---------------------------------------------------------------------------
+
+/// Parse an AGENTS.MD file content into an AgentSpec JSON.
+#[napi]
+pub fn parse_agents_md(content: String) -> Result<serde_json::Value> {
+    let spec = gauss_core::agents_md::parse_agents_md(&content)
+        .map_err(|e| napi::Error::from_reason(format!("{e}")))?;
+    serde_json::to_value(&spec)
+        .map_err(|e| napi::Error::from_reason(format!("{e}")))
+}
+
+/// Discover all AGENTS.MD files in a directory.
+#[napi]
+pub fn discover_agents(dir: String) -> Result<serde_json::Value> {
+    let specs = gauss_core::agents_md::discover_agents(&dir)
+        .map_err(|e| napi::Error::from_reason(format!("{e}")))?;
+    serde_json::to_value(&specs)
+        .map_err(|e| napi::Error::from_reason(format!("{e}")))
+}
+
+/// Parse a SKILL.MD file content into a SkillSpec JSON.
+#[napi]
+pub fn parse_skill_md(content: String) -> Result<serde_json::Value> {
+    let spec = gauss_core::skill_md::parse_skill_md(&content)
+        .map_err(|e| napi::Error::from_reason(format!("{e}")))?;
+    serde_json::to_value(&spec)
+        .map_err(|e| napi::Error::from_reason(format!("{e}")))
+}
+
 // =============================================================================
 // Graph API — handle-based DAG builder and executor
 // =============================================================================

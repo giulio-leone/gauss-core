@@ -2243,6 +2243,33 @@ fn generate_image(
     })
 }
 
+/// Parse an AGENTS.MD file content into an AgentSpec JSON.
+#[pyfunction]
+fn parse_agents_md(content: String) -> PyResult<String> {
+    let spec = gauss_core::agents_md::parse_agents_md(&content)
+        .map_err(|e| PyRuntimeError::new_err(format!("{e}")))?;
+    serde_json::to_string(&spec)
+        .map_err(|e| PyRuntimeError::new_err(format!("Serialize error: {e}")))
+}
+
+/// Discover all AGENTS.MD files in a directory.
+#[pyfunction]
+fn discover_agents(dir: String) -> PyResult<String> {
+    let specs = gauss_core::agents_md::discover_agents(&dir)
+        .map_err(|e| PyRuntimeError::new_err(format!("{e}")))?;
+    serde_json::to_string(&specs)
+        .map_err(|e| PyRuntimeError::new_err(format!("Serialize error: {e}")))
+}
+
+/// Parse a SKILL.MD file content into a SkillSpec JSON.
+#[pyfunction]
+fn parse_skill_md(content: String) -> PyResult<String> {
+    let spec = gauss_core::skill_md::parse_skill_md(&content)
+        .map_err(|e| PyRuntimeError::new_err(format!("{e}")))?;
+    serde_json::to_string(&spec)
+        .map_err(|e| PyRuntimeError::new_err(format!("Serialize error: {e}")))
+}
+
 /// Gauss Core Python module.
 #[pymodule]
 #[pyo3(name = "_native")]
@@ -2370,5 +2397,9 @@ fn gauss_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(available_runtimes, m)?)?;
     // Image Generation
     m.add_function(wrap_pyfunction!(generate_image, m)?)?;
+    // AGENTS.MD & SKILL.MD Parsers
+    m.add_function(wrap_pyfunction!(parse_agents_md, m)?)?;
+    m.add_function(wrap_pyfunction!(discover_agents, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_skill_md, m)?)?;
     Ok(())
 }

@@ -6,6 +6,7 @@
 //! RAG, MCP, middleware, observability, and multi-agent networks.
 
 pub mod agent;
+pub mod agents_md;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod code_execution;
 pub mod config;
@@ -25,6 +26,7 @@ pub mod plugin;
 pub mod provider;
 pub mod rag;
 pub mod resilience;
+pub mod skill_md;
 pub mod stream_transform;
 pub mod streaming;
 pub mod team;
@@ -39,6 +41,7 @@ pub type Shared<T> = std::sync::Arc<T>;
 pub type Shared<T> = std::rc::Rc<T>;
 
 pub use agent::{Agent, AgentBuilder, AgentOutput};
+pub use agents_md::{AgentSpec, AgentToolSpec};
 #[cfg(not(target_arch = "wasm32"))]
 pub use code_execution::{
     BashRuntime, CodeExecutionConfig, CodeExecutionConfigBuilder, CodeExecutionOrchestrator,
@@ -49,6 +52,7 @@ pub use error::GaussError;
 pub use graph::{ConsensusStrategy, Graph, GraphBuilder, GraphResult};
 pub use message::{Citation, Content, GeneratedImageData, GroundingChunk, GroundingMetadata, ImageGenerationConfig, ImageGenerationResult, Message, Role};
 pub use provider::{GenerateOptions, Provider, ProviderCapabilities, ProviderConfig};
+pub use skill_md::{SkillSpec, SkillStep, SkillParam};
 pub use streaming::StreamEvent;
 pub use team::{Team, TeamBuilder, TeamOutput};
 pub use tool::{Tool, ToolChoice};

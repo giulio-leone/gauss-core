@@ -373,3 +373,9 @@ export function team_add_agent(
 export function team_set_strategy(handle: number, strategy: string): void
 export function team_run(handle: number, messagesJson: string): Promise<any>
 export function destroy_team(handle: number): void
+
+// ============ AGENTS.MD & SKILL.MD Parsers ============
+
+export function parse_agents_md(content: string): any
+export function discover_agents(dir: string): any
+export function parse_skill_md(content: string): any
