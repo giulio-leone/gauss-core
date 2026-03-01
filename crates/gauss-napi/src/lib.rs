@@ -18,7 +18,7 @@ use gauss_core::provider::groq::GroqProvider;
 use gauss_core::provider::ollama::OllamaProvider;
 use gauss_core::provider::openai::OpenAiProvider;
 use gauss_core::provider::retry::{RetryConfig, RetryProvider};
-use gauss_core::provider::{GenerateOptions, Provider, ProviderConfig};
+use gauss_core::provider::{GenerateOptions, Provider, ProviderConfig, ReasoningEffort};
 use gauss_core::rag;
 use gauss_core::telemetry;
 use gauss_core::tool::Tool as RustTool;
@@ -174,6 +174,8 @@ pub struct AgentOptions {
     pub stop_on_tool: Option<String>,
     pub output_schema: Option<serde_json::Value>,
     pub thinking_budget: Option<u32>,
+    /// Reasoning effort for OpenAI o-series models: "low", "medium", or "high".
+    pub reasoning_effort: Option<String>,
     pub cache_control: Option<bool>,
     /// Enable code execution. Pass a CodeExecutionOptions object or `true` for defaults.
     pub code_execution: Option<CodeExecutionOptions>,
@@ -252,6 +254,15 @@ fn napi_code_exec_to_config(opts: &CodeExecutionOptions) -> CodeExecutionConfig 
     }
 }
 
+fn parse_reasoning_effort(s: &str) -> Option<ReasoningEffort> {
+    match s.to_lowercase().as_str() {
+        "low" => Some(ReasoningEffort::Low),
+        "medium" => Some(ReasoningEffort::Medium),
+        "high" => Some(ReasoningEffort::High),
+        _ => None,
+    }
+}
+
 fn apply_code_execution(
     mut builder: gauss_core::agent::AgentBuilder,
     ce: &CodeExecutionOptions,
@@ -306,6 +317,7 @@ pub async fn agent_run(
         stop_on_tool: None,
         output_schema: None,
         thinking_budget: None,
+        reasoning_effort: None,
         cache_control: None,
         code_execution: None,
         grounding: None,
@@ -341,6 +353,11 @@ pub async fn agent_run(
     }
     if let Some(budget) = opts.thinking_budget {
         builder = builder.thinking_budget(budget);
+    }
+    if let Some(ref effort_str) = opts.reasoning_effort {
+        if let Some(effort) = parse_reasoning_effort(effort_str) {
+            builder = builder.reasoning_effort(effort);
+        }
     }
     if let Some(true) = opts.cache_control {
         builder = builder.cache_control(true);
@@ -405,6 +422,7 @@ pub async fn agent_run_with_tool_executor(
         stop_on_tool: None,
         output_schema: None,
         thinking_budget: None,
+        reasoning_effort: None,
         cache_control: None,
         code_execution: None,
         grounding: None,
@@ -440,6 +458,11 @@ pub async fn agent_run_with_tool_executor(
     }
     if let Some(budget) = opts.thinking_budget {
         builder = builder.thinking_budget(budget);
+    }
+    if let Some(ref effort_str) = opts.reasoning_effort {
+        if let Some(effort) = parse_reasoning_effort(effort_str) {
+            builder = builder.reasoning_effort(effort);
+        }
     }
     if let Some(true) = opts.cache_control {
         builder = builder.cache_control(true);
@@ -542,6 +565,7 @@ pub async fn agent_stream_with_tool_executor(
         stop_on_tool: None,
         output_schema: None,
         thinking_budget: None,
+        reasoning_effort: None,
         cache_control: None,
         code_execution: None,
         grounding: None,
@@ -577,6 +601,11 @@ pub async fn agent_stream_with_tool_executor(
     }
     if let Some(budget) = opts.thinking_budget {
         builder = builder.thinking_budget(budget);
+    }
+    if let Some(ref effort_str) = opts.reasoning_effort {
+        if let Some(effort) = parse_reasoning_effort(effort_str) {
+            builder = builder.reasoning_effort(effort);
+        }
     }
     if let Some(true) = opts.cache_control {
         builder = builder.cache_control(true);
@@ -913,15 +942,19 @@ pub async fn generate(
     temperature: Option<f64>,
     max_tokens: Option<u32>,
     thinking_budget: Option<u32>,
+    reasoning_effort: Option<String>,
     cache_control: Option<bool>,
 ) -> Result<serde_json::Value> {
     let provider = get_provider(provider_handle)?;
     let rust_msgs: Vec<RustMessage> = messages.iter().map(js_message_to_rust).collect();
 
+    let parsed_effort = reasoning_effort.as_deref().and_then(parse_reasoning_effort);
+
     let opts = GenerateOptions {
         temperature,
         max_tokens,
         thinking_budget,
+        reasoning_effort: parsed_effort,
         cache_control: cache_control.unwrap_or(false),
         ..GenerateOptions::default()
     };
@@ -964,6 +997,8 @@ pub async fn generate_with_tools(
     tools: Vec<ToolDef>,
     temperature: Option<f64>,
     max_tokens: Option<u32>,
+    thinking_budget: Option<u32>,
+    reasoning_effort: Option<String>,
 ) -> Result<serde_json::Value> {
     let provider = get_provider(provider_handle)?;
     let rust_msgs: Vec<RustMessage> = messages.iter().map(js_message_to_rust).collect();
@@ -979,9 +1014,13 @@ pub async fn generate_with_tools(
         })
         .collect();
 
+    let parsed_effort = reasoning_effort.as_deref().and_then(parse_reasoning_effort);
+
     let opts = GenerateOptions {
         temperature,
         max_tokens,
+        thinking_budget,
+        reasoning_effort: parsed_effort,
         ..GenerateOptions::default()
     };
 

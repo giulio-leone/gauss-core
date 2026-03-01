@@ -16,7 +16,7 @@ use gauss_core::provider::groq::GroqProvider;
 use gauss_core::provider::ollama::OllamaProvider;
 use gauss_core::provider::openai::OpenAiProvider;
 use gauss_core::provider::retry::{RetryConfig, RetryProvider};
-use gauss_core::provider::{GenerateOptions, Provider, ProviderConfig};
+use gauss_core::provider::{GenerateOptions, Provider, ProviderConfig, ReasoningEffort};
 use gauss_core::rag;
 use gauss_core::resilience;
 use gauss_core::stream_transform;
@@ -130,6 +130,15 @@ fn parse_messages(messages_json: &str) -> PyResult<Vec<RustMessage>> {
         .collect())
 }
 
+fn parse_reasoning_effort(s: &str) -> Option<ReasoningEffort> {
+    match s.to_lowercase().as_str() {
+        "low" => Some(ReasoningEffort::Low),
+        "medium" => Some(ReasoningEffort::Medium),
+        "high" => Some(ReasoningEffort::High),
+        _ => None,
+    }
+}
+
 /// Get provider capabilities. Returns JSON string.
 #[pyfunction]
 fn get_provider_capabilities(provider_handle: u32) -> PyResult<String> {
@@ -156,7 +165,7 @@ fn get_provider_capabilities(provider_handle: u32) -> PyResult<String> {
 
 /// Call generate. Returns JSON string.
 #[pyfunction]
-#[pyo3(signature = (provider_handle, messages_json, temperature=None, max_tokens=None, thinking_budget=None, cache_control=None))]
+#[pyo3(signature = (provider_handle, messages_json, temperature=None, max_tokens=None, thinking_budget=None, reasoning_effort=None, cache_control=None))]
 fn generate(
     py: Python<'_>,
     provider_handle: u32,
@@ -164,16 +173,20 @@ fn generate(
     temperature: Option<f64>,
     max_tokens: Option<u32>,
     thinking_budget: Option<u32>,
+    reasoning_effort: Option<String>,
     cache_control: Option<bool>,
 ) -> PyResult<Bound<'_, pyo3::types::PyAny>> {
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
         let provider = get_provider(provider_handle)?;
         let rust_msgs = parse_messages(&messages_json)?;
 
+        let parsed_effort = reasoning_effort.as_deref().and_then(parse_reasoning_effort);
+
         let opts = GenerateOptions {
             temperature,
             max_tokens,
             thinking_budget,
+            reasoning_effort: parsed_effort,
             cache_control: cache_control.unwrap_or(false),
             ..GenerateOptions::default()
         };
@@ -298,6 +311,11 @@ fn agent_run(
             }
             if let Some(budget) = opts["thinking_budget"].as_u64() {
                 builder = builder.thinking_budget(budget as u32);
+            }
+            if let Some(effort_str) = opts["reasoning_effort"].as_str() {
+                if let Some(effort) = parse_reasoning_effort(effort_str) {
+                    builder = builder.reasoning_effort(effort);
+                }
             }
             if opts["cache_control"].as_bool().unwrap_or(false) {
                 builder = builder.cache_control(true);
