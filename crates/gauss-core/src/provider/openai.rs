@@ -35,6 +35,16 @@ impl OpenAiProvider {
         self.config.base_url.as_deref().unwrap_or(DEFAULT_BASE_URL)
     }
 
+    /// Returns true if this model requires `max_completion_tokens` instead of `max_tokens`.
+    /// Newer OpenAI models (o-series reasoning, gpt-5.x) use the new parameter name.
+    fn uses_max_completion_tokens(&self) -> bool {
+        let m = self.model.as_str();
+        m.starts_with("o1")
+            || m.starts_with("o3")
+            || m.starts_with("o4")
+            || m.starts_with("gpt-5")
+    }
+
     fn build_request_body(
         &self,
         messages: &[Message],
@@ -87,7 +97,12 @@ impl OpenAiProvider {
             body["top_p"] = json!(tp);
         }
         if let Some(mt) = options.max_tokens {
-            body["max_tokens"] = json!(mt);
+            // Newer OpenAI models (o-series, gpt-5.x) require max_completion_tokens
+            if self.uses_max_completion_tokens() {
+                body["max_completion_tokens"] = json!(mt);
+            } else {
+                body["max_tokens"] = json!(mt);
+            }
         }
         if let Some(fp) = options.frequency_penalty {
             body["frequency_penalty"] = json!(fp);
