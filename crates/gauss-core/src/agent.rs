@@ -674,6 +674,25 @@ impl AgentBuilder {
         self
     }
 
+    /// Enable code execution with the given config — adds runtime tools to the agent.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn code_execution(mut self, config: crate::code_execution::CodeExecutionConfig) -> Self {
+        let orchestrator = crate::code_execution::CodeExecutionOrchestrator::new(config);
+        self.tools.extend(orchestrator.tools());
+        self
+    }
+
+    /// Enable code execution with a unified `execute_code` tool that dispatches by language.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn code_execution_unified(
+        mut self,
+        config: crate::code_execution::CodeExecutionConfig,
+    ) -> Self {
+        let orchestrator = crate::code_execution::CodeExecutionOrchestrator::new(config);
+        self.tools.push(orchestrator.unified_tool());
+        self
+    }
+
     pub fn build(self) -> Agent {
         Agent {
             name: self.name,

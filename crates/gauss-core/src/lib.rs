@@ -41,7 +41,8 @@ pub type Shared<T> = std::rc::Rc<T>;
 pub use agent::{Agent, AgentBuilder, AgentOutput};
 #[cfg(not(target_arch = "wasm32"))]
 pub use code_execution::{
-    BashRuntime, CodeRuntime, ExecutionResult, JavaScriptRuntime, PythonRuntime, RuntimeConfig,
+    BashRuntime, CodeExecutionConfig, CodeExecutionConfigBuilder, CodeExecutionOrchestrator,
+    CodeRuntime, ExecutionResult, JavaScriptRuntime, PythonRuntime, RuntimeConfig, SandboxConfig,
     code_execution_tool,
 };
 pub use error::GaussError;
