@@ -2276,6 +2276,149 @@ pub fn parse_skill_md(content: String) -> Result<serde_json::Value> {
 }
 
 // =============================================================================
+// A2A (Agent-to-Agent) Protocol
+// =============================================================================
+
+/// Create an A2A client for connecting to a remote agent.
+/// Returns a JSON-serialized handle config (base_url, auth_token).
+#[napi]
+pub fn create_a2a_client(base_url: String, auth_token: Option<String>) -> Result<serde_json::Value> {
+    let mut config = serde_json::json!({ "baseUrl": base_url });
+    if let Some(token) = &auth_token {
+        config["authToken"] = serde_json::json!(token);
+    }
+    Ok(config)
+}
+
+/// Discover a remote agent's capabilities by fetching its AgentCard.
+#[napi]
+pub async fn a2a_discover(base_url: String, auth_token: Option<String>) -> Result<serde_json::Value> {
+    let mut client = gauss_core::a2a_client::A2aClient::new(&base_url);
+    if let Some(token) = auth_token {
+        client = client.with_auth_token(&token);
+    }
+    let card = client.discover().await
+        .map_err(|e| napi::Error::from_reason(format!("A2A discover error: {e}")))?;
+    serde_json::to_value(&card)
+        .map_err(|e| napi::Error::from_reason(format!("Serialize error: {e}")))
+}
+
+/// Send a message to a remote A2A agent.
+#[napi]
+pub async fn a2a_send_message(
+    base_url: String,
+    auth_token: Option<String>,
+    message_json: String,
+    config_json: Option<String>,
+) -> Result<serde_json::Value> {
+    let mut client = gauss_core::a2a_client::A2aClient::new(&base_url);
+    if let Some(token) = auth_token {
+        client = client.with_auth_token(&token);
+    }
+    let message: gauss_core::a2a::A2aMessage = serde_json::from_str(&message_json)
+        .map_err(|e| napi::Error::from_reason(format!("Invalid message JSON: {e}")))?;
+    let config = config_json.map(|c| serde_json::from_str(&c))
+        .transpose()
+        .map_err(|e| napi::Error::from_reason(format!("Invalid config JSON: {e}")))?;
+    let result = client.send_message(message, config).await
+        .map_err(|e| napi::Error::from_reason(format!("A2A send error: {e}")))?;
+    let value = match result {
+        gauss_core::a2a_client::SendMessageResult::Task(task) => {
+            let mut v = serde_json::to_value(&task)
+                .map_err(|e| napi::Error::from_reason(format!("Serialize error: {e}")))?;
+            v["_type"] = serde_json::json!("task");
+            v
+        }
+        gauss_core::a2a_client::SendMessageResult::Message(msg) => {
+            let mut v = serde_json::to_value(&msg)
+                .map_err(|e| napi::Error::from_reason(format!("Serialize error: {e}")))?;
+            v["_type"] = serde_json::json!("message");
+            v
+        }
+    };
+    Ok(value)
+}
+
+/// Quick helper: send a text message and get a text response.
+#[napi]
+pub async fn a2a_ask(
+    base_url: String,
+    auth_token: Option<String>,
+    text: String,
+) -> Result<String> {
+    let mut client = gauss_core::a2a_client::A2aClient::new(&base_url);
+    if let Some(token) = auth_token {
+        client = client.with_auth_token(&token);
+    }
+    client.ask(&text).await
+        .map_err(|e| napi::Error::from_reason(format!("A2A ask error: {e}")))
+}
+
+/// Get a task by ID from a remote A2A agent.
+#[napi]
+pub async fn a2a_get_task(
+    base_url: String,
+    auth_token: Option<String>,
+    task_id: String,
+    history_length: Option<u32>,
+) -> Result<serde_json::Value> {
+    let mut client = gauss_core::a2a_client::A2aClient::new(&base_url);
+    if let Some(token) = auth_token {
+        client = client.with_auth_token(&token);
+    }
+    let task = client.get_task(&task_id, history_length).await
+        .map_err(|e| napi::Error::from_reason(format!("A2A get_task error: {e}")))?;
+    serde_json::to_value(&task)
+        .map_err(|e| napi::Error::from_reason(format!("Serialize error: {e}")))
+}
+
+/// Cancel a task on a remote A2A agent.
+#[napi]
+pub async fn a2a_cancel_task(
+    base_url: String,
+    auth_token: Option<String>,
+    task_id: String,
+) -> Result<serde_json::Value> {
+    let mut client = gauss_core::a2a_client::A2aClient::new(&base_url);
+    if let Some(token) = auth_token {
+        client = client.with_auth_token(&token);
+    }
+    let task = client.cancel_task(&task_id).await
+        .map_err(|e| napi::Error::from_reason(format!("A2A cancel error: {e}")))?;
+    serde_json::to_value(&task)
+        .map_err(|e| napi::Error::from_reason(format!("Serialize error: {e}")))
+}
+
+/// Process a JSON-RPC A2A request (server-side handler).
+/// Takes an AgentCard JSON and the raw request body, returns the JSON-RPC response.
+#[napi]
+pub async fn a2a_handle_request(
+    agent_card_json: String,
+    request_body: String,
+) -> Result<String> {
+    // For NAPI, we provide a simple passthrough handler that echoes back
+    // This is a thin wrapper — users will implement custom handlers in JS
+    let _card: gauss_core::a2a::AgentCard = serde_json::from_str(&agent_card_json)
+        .map_err(|e| napi::Error::from_reason(format!("Invalid AgentCard JSON: {e}")))?;
+    // Parse and validate the JSON-RPC request structure
+    let _req: gauss_core::a2a::JsonRpcRequest = serde_json::from_str(&request_body)
+        .map_err(|e| napi::Error::from_reason(format!("Invalid JSON-RPC request: {e}")))?;
+    // Return a method-not-found response — JS side should implement the actual handler
+    let resp = gauss_core::a2a::JsonRpcResponse {
+        jsonrpc: "2.0".to_string(),
+        id: _req.id,
+        result: None,
+        error: Some(gauss_core::a2a::JsonRpcError {
+            code: -32601,
+            message: "Use the JavaScript A2aServer class to handle requests".to_string(),
+            data: None,
+        }),
+    };
+    serde_json::to_string(&resp)
+        .map_err(|e| napi::Error::from_reason(format!("Serialize error: {e}")))
+}
+
+// =============================================================================
 // Graph API — handle-based DAG builder and executor
 // =============================================================================
 

@@ -5,6 +5,9 @@
 //! streaming, structured output, multi-provider support, memory,
 //! RAG, MCP, middleware, observability, and multi-agent networks.
 
+pub mod a2a;
+pub mod a2a_client;
+pub mod a2a_server;
 pub mod agent;
 pub mod agents_md;
 #[cfg(not(target_arch = "wasm32"))]

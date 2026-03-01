@@ -2270,6 +2270,113 @@ fn parse_skill_md(content: String) -> PyResult<String> {
         .map_err(|e| PyRuntimeError::new_err(format!("Serialize error: {e}")))
 }
 
+/// Discover a remote A2A agent's capabilities.
+#[pyfunction]
+fn a2a_discover(py: Python<'_>, base_url: String, auth_token: Option<String>) -> PyResult<Bound<'_, pyo3::types::PyAny>> {
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let mut client = gauss_core::a2a_client::A2aClient::new(&base_url);
+        if let Some(token) = auth_token {
+            client = client.with_auth_token(&token);
+        }
+        let card = client.discover().await
+            .map_err(|e| PyRuntimeError::new_err(format!("A2A discover error: {e}")))?;
+        serde_json::to_string(&card)
+            .map_err(|e| PyRuntimeError::new_err(format!("Serialize error: {e}")))
+    })
+}
+
+/// Send a message to a remote A2A agent.
+#[pyfunction]
+#[pyo3(signature = (base_url, auth_token=None, message_json="".to_string(), config_json=None))]
+fn a2a_send_message(
+    py: Python<'_>,
+    base_url: String,
+    auth_token: Option<String>,
+    message_json: String,
+    config_json: Option<String>,
+) -> PyResult<Bound<'_, pyo3::types::PyAny>> {
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let mut client = gauss_core::a2a_client::A2aClient::new(&base_url);
+        if let Some(token) = auth_token {
+            client = client.with_auth_token(&token);
+        }
+        let message: gauss_core::a2a::A2aMessage = serde_json::from_str(&message_json)
+            .map_err(|e| PyRuntimeError::new_err(format!("Invalid message JSON: {e}")))?;
+        let config = config_json.map(|c| serde_json::from_str(&c))
+            .transpose()
+            .map_err(|e| PyRuntimeError::new_err(format!("Invalid config JSON: {e}")))?;
+        let result = client.send_message(message, config).await
+            .map_err(|e| PyRuntimeError::new_err(format!("A2A send error: {e}")))?;
+        let value = match result {
+            gauss_core::a2a_client::SendMessageResult::Task(task) => serde_json::to_string(&task),
+            gauss_core::a2a_client::SendMessageResult::Message(msg) => serde_json::to_string(&msg),
+        };
+        value.map_err(|e| PyRuntimeError::new_err(format!("Serialize error: {e}")))
+    })
+}
+
+/// Quick A2A helper: send text and get text response.
+#[pyfunction]
+#[pyo3(signature = (base_url, auth_token=None, text="".to_string()))]
+fn a2a_ask(
+    py: Python<'_>,
+    base_url: String,
+    auth_token: Option<String>,
+    text: String,
+) -> PyResult<Bound<'_, pyo3::types::PyAny>> {
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let mut client = gauss_core::a2a_client::A2aClient::new(&base_url);
+        if let Some(token) = auth_token {
+            client = client.with_auth_token(&token);
+        }
+        client.ask(&text).await
+            .map_err(|e| PyRuntimeError::new_err(format!("A2A ask error: {e}")))
+    })
+}
+
+/// Get an A2A task by ID.
+#[pyfunction]
+#[pyo3(signature = (base_url, auth_token=None, task_id="".to_string(), history_length=None))]
+fn a2a_get_task(
+    py: Python<'_>,
+    base_url: String,
+    auth_token: Option<String>,
+    task_id: String,
+    history_length: Option<u32>,
+) -> PyResult<Bound<'_, pyo3::types::PyAny>> {
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let mut client = gauss_core::a2a_client::A2aClient::new(&base_url);
+        if let Some(token) = auth_token {
+            client = client.with_auth_token(&token);
+        }
+        let task = client.get_task(&task_id, history_length).await
+            .map_err(|e| PyRuntimeError::new_err(format!("A2A get_task error: {e}")))?;
+        serde_json::to_string(&task)
+            .map_err(|e| PyRuntimeError::new_err(format!("Serialize error: {e}")))
+    })
+}
+
+/// Cancel an A2A task.
+#[pyfunction]
+#[pyo3(signature = (base_url, auth_token=None, task_id="".to_string()))]
+fn a2a_cancel_task(
+    py: Python<'_>,
+    base_url: String,
+    auth_token: Option<String>,
+    task_id: String,
+) -> PyResult<Bound<'_, pyo3::types::PyAny>> {
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let mut client = gauss_core::a2a_client::A2aClient::new(&base_url);
+        if let Some(token) = auth_token {
+            client = client.with_auth_token(&token);
+        }
+        let task = client.cancel_task(&task_id).await
+            .map_err(|e| PyRuntimeError::new_err(format!("A2A cancel error: {e}")))?;
+        serde_json::to_string(&task)
+            .map_err(|e| PyRuntimeError::new_err(format!("Serialize error: {e}")))
+    })
+}
+
 /// Gauss Core Python module.
 #[pymodule]
 #[pyo3(name = "_native")]
@@ -2401,5 +2508,11 @@ fn gauss_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(parse_agents_md, m)?)?;
     m.add_function(wrap_pyfunction!(discover_agents, m)?)?;
     m.add_function(wrap_pyfunction!(parse_skill_md, m)?)?;
+    // A2A Protocol
+    m.add_function(wrap_pyfunction!(a2a_discover, m)?)?;
+    m.add_function(wrap_pyfunction!(a2a_send_message, m)?)?;
+    m.add_function(wrap_pyfunction!(a2a_ask, m)?)?;
+    m.add_function(wrap_pyfunction!(a2a_get_task, m)?)?;
+    m.add_function(wrap_pyfunction!(a2a_cancel_task, m)?)?;
     Ok(())
 }

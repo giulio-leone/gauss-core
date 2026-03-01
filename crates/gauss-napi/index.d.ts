@@ -379,3 +379,13 @@ export function destroy_team(handle: number): void
 export function parseAgentsMd(content: string): any
 export function discoverAgents(dir: string): any
 export function parseSkillMd(content: string): any
+
+// ============ A2A Protocol ============
+
+export function createA2aClient(baseUrl: string, authToken?: string): any
+export function a2aDiscover(baseUrl: string, authToken?: string): Promise<any>
+export function a2aSendMessage(baseUrl: string, authToken?: string | null, messageJson: string, configJson?: string | null): Promise<any>
+export function a2aAsk(baseUrl: string, authToken?: string | null, text: string): Promise<string>
+export function a2aGetTask(baseUrl: string, authToken?: string | null, taskId: string, historyLength?: number | null): Promise<any>
+export function a2aCancelTask(baseUrl: string, authToken?: string | null, taskId: string): Promise<any>
+export function a2aHandleRequest(agentCardJson: string, requestBody: string): Promise<string>
