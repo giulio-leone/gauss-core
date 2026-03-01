@@ -4,7 +4,7 @@ use gauss_core::eval;
 use gauss_core::guardrail;
 use gauss_core::hitl;
 use gauss_core::mcp;
-use gauss_core::memory;
+use gauss_core::memory::{self, Memory as _};
 use gauss_core::message::Message as RustMessage;
 use gauss_core::network;
 use gauss_core::plugin;
@@ -1336,6 +1336,448 @@ fn agent_config_resolve_env(value: String) -> String {
     gauss_core::config::resolve_env(&value)
 }
 
+// ============ Graph ============
+
+struct GraphNodeDef {
+    id: String,
+    agent_name: String,
+    provider_handle: u32,
+    instructions: Option<String>,
+    tools: Vec<(String, String, Option<serde_json::Value>)>,
+}
+
+struct GraphState {
+    nodes: Vec<GraphNodeDef>,
+    edges: Vec<(String, String)>,
+}
+
+fn graphs() -> &'static Mutex<HashMap<u32, GraphState>> {
+    static R: OnceLock<Mutex<HashMap<u32, GraphState>>> = OnceLock::new();
+    R.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[pyfunction]
+fn create_graph() -> u32 {
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    graphs().lock().expect("registry mutex poisoned").insert(
+        id,
+        GraphState {
+            nodes: vec![],
+            edges: vec![],
+        },
+    );
+    id
+}
+
+#[pyfunction]
+#[pyo3(signature = (handle, node_id, agent_name, provider_handle, instructions=None, tools_json=None))]
+fn graph_add_node(
+    handle: u32,
+    node_id: String,
+    agent_name: String,
+    provider_handle: u32,
+    instructions: Option<String>,
+    tools_json: Option<String>,
+) -> PyResult<()> {
+    let tools: Vec<(String, String, Option<serde_json::Value>)> = match tools_json {
+        Some(j) => {
+            let parsed: Vec<serde_json::Value> = serde_json::from_str(&j).map_err(py_err)?;
+            parsed
+                .into_iter()
+                .map(|t| {
+                    let name = t["name"].as_str().unwrap_or("").to_string();
+                    let desc = t["description"].as_str().unwrap_or("").to_string();
+                    let params = t.get("parameters").cloned();
+                    (name, desc, params)
+                })
+                .collect()
+        }
+        None => vec![],
+    };
+    let mut g = graphs().lock().expect("registry mutex poisoned");
+    let state = g
+        .get_mut(&handle)
+        .ok_or_else(|| py_err("Graph not found"))?;
+    state.nodes.push(GraphNodeDef {
+        id: node_id,
+        agent_name,
+        provider_handle,
+        instructions,
+        tools,
+    });
+    Ok(())
+}
+
+#[pyfunction]
+fn graph_add_edge(handle: u32, from: String, to: String) -> PyResult<()> {
+    let mut g = graphs().lock().expect("registry mutex poisoned");
+    let state = g
+        .get_mut(&handle)
+        .ok_or_else(|| py_err("Graph not found"))?;
+    state.edges.push((from, to));
+    Ok(())
+}
+
+#[pyfunction]
+fn graph_run<'py>(py: Python<'py>, handle: u32, prompt: String) -> PyResult<Bound<'py, pyo3::types::PyAny>> {
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let state = {
+            let g = graphs().lock().expect("registry mutex poisoned");
+            let s = g.get(&handle).ok_or_else(|| py_err("Graph not found"))?;
+            let nodes: Vec<_> = s
+                .nodes
+                .iter()
+                .map(|n| {
+                    (
+                        n.id.clone(),
+                        n.agent_name.clone(),
+                        n.provider_handle,
+                        n.instructions.clone(),
+                        n.tools.clone(),
+                    )
+                })
+                .collect();
+            let edges = s.edges.clone();
+            Ok::<_, PyErr>((nodes, edges))
+        }?;
+
+        let (node_defs, edges) = state;
+        let mut builder = gauss_core::Graph::builder();
+
+        for (node_id, agent_name, prov_handle, instructions, tools) in &node_defs {
+            let provider = get_provider(*prov_handle)?;
+            let mut agent_builder = RustAgent::builder(agent_name.clone(), provider);
+            if let Some(instr) = instructions {
+                agent_builder = agent_builder.instructions(instr.clone());
+            }
+            for (name, desc, params) in tools {
+                let mut tb = gauss_core::tool::Tool::builder(name, desc);
+                if let Some(p) = params {
+                    tb = tb.parameters_json(p.clone());
+                }
+                agent_builder = agent_builder.tool(tb.build());
+            }
+            let agent = agent_builder.build();
+            let nid = node_id.clone();
+            builder = builder.node(nid, agent, |_deps| {
+                vec![RustMessage::user("Continue based on prior context.")]
+            });
+        }
+
+        for (from, to) in &edges {
+            builder = builder.edge(from.clone(), to.clone());
+        }
+
+        let graph = builder.build();
+        let result = graph.run(prompt).await.map_err(py_err)?;
+
+        let outputs: serde_json::Value = result
+            .outputs
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    json!({ "node_id": v.node_id, "text": v.text, "data": v.data }),
+                )
+            })
+            .collect::<serde_json::Map<String, serde_json::Value>>()
+            .into();
+
+        let result_json = serde_json::to_string(&json!({
+            "outputs": outputs,
+            "final_text": result.final_output.map(|o| o.text),
+        }))
+        .map_err(py_err)?;
+
+        Ok(result_json)
+    })
+}
+
+#[pyfunction]
+fn destroy_graph(handle: u32) -> PyResult<()> {
+    graphs()
+        .lock()
+        .unwrap()
+        .remove(&handle)
+        .ok_or_else(|| py_err("Graph not found"))?;
+    Ok(())
+}
+
+// ============ Workflow ============
+
+struct WorkflowStepDef {
+    id: String,
+    agent_name: String,
+    provider_handle: u32,
+    instructions: Option<String>,
+    tools: Vec<(String, String, Option<serde_json::Value>)>,
+}
+
+struct WorkflowState {
+    steps: Vec<WorkflowStepDef>,
+    dependencies: Vec<(String, String)>,
+}
+
+fn workflow_states() -> &'static Mutex<HashMap<u32, WorkflowState>> {
+    static R: OnceLock<Mutex<HashMap<u32, WorkflowState>>> = OnceLock::new();
+    R.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[pyfunction]
+fn create_workflow() -> u32 {
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    workflow_states()
+        .lock()
+        .expect("registry mutex poisoned")
+        .insert(
+            id,
+            WorkflowState {
+                steps: vec![],
+                dependencies: vec![],
+            },
+        );
+    id
+}
+
+#[pyfunction]
+#[pyo3(signature = (handle, step_id, agent_name, provider_handle, instructions=None, tools_json=None))]
+fn workflow_add_step(
+    handle: u32,
+    step_id: String,
+    agent_name: String,
+    provider_handle: u32,
+    instructions: Option<String>,
+    tools_json: Option<String>,
+) -> PyResult<()> {
+    let tools: Vec<(String, String, Option<serde_json::Value>)> = match tools_json {
+        Some(j) => {
+            let parsed: Vec<serde_json::Value> = serde_json::from_str(&j).map_err(py_err)?;
+            parsed
+                .into_iter()
+                .map(|t| {
+                    let name = t["name"].as_str().unwrap_or("").to_string();
+                    let desc = t["description"].as_str().unwrap_or("").to_string();
+                    let params = t.get("parameters").cloned();
+                    (name, desc, params)
+                })
+                .collect()
+        }
+        None => vec![],
+    };
+    let mut w = workflow_states().lock().expect("registry mutex poisoned");
+    let state = w
+        .get_mut(&handle)
+        .ok_or_else(|| py_err("Workflow not found"))?;
+    state.steps.push(WorkflowStepDef {
+        id: step_id,
+        agent_name,
+        provider_handle,
+        instructions,
+        tools,
+    });
+    Ok(())
+}
+
+#[pyfunction]
+fn workflow_add_dependency(handle: u32, step_id: String, depends_on: String) -> PyResult<()> {
+    let mut w = workflow_states().lock().expect("registry mutex poisoned");
+    let state = w
+        .get_mut(&handle)
+        .ok_or_else(|| py_err("Workflow not found"))?;
+    state.dependencies.push((step_id, depends_on));
+    Ok(())
+}
+
+#[pyfunction]
+fn workflow_run<'py>(py: Python<'py>, handle: u32, prompt: String) -> PyResult<Bound<'py, pyo3::types::PyAny>> {
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let state = {
+            let w = workflow_states().lock().expect("registry mutex poisoned");
+            let s = w.get(&handle).ok_or_else(|| py_err("Workflow not found"))?;
+            let steps: Vec<_> = s
+                .steps
+                .iter()
+                .map(|st| {
+                    (
+                        st.id.clone(),
+                        st.agent_name.clone(),
+                        st.provider_handle,
+                        st.instructions.clone(),
+                        st.tools.clone(),
+                    )
+                })
+                .collect();
+            let deps = s.dependencies.clone();
+            Ok::<_, PyErr>((steps, deps))
+        }?;
+
+        let (step_defs, deps) = state;
+        let mut builder = gauss_core::Workflow::builder();
+
+        for (step_id, agent_name, prov_handle, instructions, tools) in &step_defs {
+            let provider = get_provider(*prov_handle)?;
+            let mut agent_builder = RustAgent::builder(agent_name.clone(), provider);
+            if let Some(instr) = instructions {
+                agent_builder = agent_builder.instructions(instr.clone());
+            }
+            for (name, desc, params) in tools {
+                let mut tb = gauss_core::tool::Tool::builder(name, desc);
+                if let Some(p) = params {
+                    tb = tb.parameters_json(p.clone());
+                }
+                agent_builder = agent_builder.tool(tb.build());
+            }
+            let agent = agent_builder.build();
+            builder = builder.agent_step(step_id.clone(), agent, |_completed| {
+                vec![RustMessage::user("Continue.")]
+            });
+        }
+
+        for (step_id, depends_on) in &deps {
+            builder = builder.dependency(step_id.clone(), depends_on.clone());
+        }
+
+        let workflow = builder.build();
+        let initial = vec![RustMessage::user(prompt)];
+        let result = workflow.run(initial).await.map_err(py_err)?;
+
+        let outputs: serde_json::Value = result
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    json!({ "step_id": v.step_id, "text": v.text, "data": v.data }),
+                )
+            })
+            .collect::<serde_json::Map<String, serde_json::Value>>()
+            .into();
+
+        let result_json = serde_json::to_string(&json!({ "steps": outputs })).map_err(py_err)?;
+        Ok(result_json)
+    })
+}
+
+#[pyfunction]
+fn destroy_workflow(handle: u32) -> PyResult<()> {
+    workflow_states()
+        .lock()
+        .unwrap()
+        .remove(&handle)
+        .ok_or_else(|| py_err("Workflow not found"))?;
+    Ok(())
+}
+
+// ============ Middleware ============
+
+fn middleware_chains() -> &'static Mutex<HashMap<u32, Arc<Mutex<gauss_core::middleware::MiddlewareChain>>>> {
+    static R: OnceLock<Mutex<HashMap<u32, Arc<Mutex<gauss_core::middleware::MiddlewareChain>>>>> =
+        OnceLock::new();
+    R.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[pyfunction]
+fn create_middleware_chain() -> u32 {
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    middleware_chains()
+        .lock()
+        .unwrap()
+        .insert(id, Arc::new(Mutex::new(gauss_core::middleware::MiddlewareChain::new())));
+    id
+}
+
+#[pyfunction]
+fn middleware_use_logging(handle: u32) -> PyResult<()> {
+    let reg = middleware_chains();
+    let guard = reg.lock().expect("registry mutex poisoned");
+    let chain = guard
+        .get(&handle)
+        .ok_or_else(|| py_err("MiddlewareChain not found"))?;
+    chain
+        .lock()
+        .unwrap()
+        .use_middleware(Arc::new(gauss_core::middleware::LoggingMiddleware));
+    Ok(())
+}
+
+#[pyfunction]
+fn middleware_use_caching(handle: u32, ttl_ms: u32) -> PyResult<()> {
+    let reg = middleware_chains();
+    let guard = reg.lock().expect("registry mutex poisoned");
+    let chain = guard
+        .get(&handle)
+        .ok_or_else(|| py_err("MiddlewareChain not found"))?;
+    chain
+        .lock()
+        .unwrap()
+        .use_middleware(Arc::new(gauss_core::middleware::CachingMiddleware::new(ttl_ms as u64)));
+    Ok(())
+}
+
+#[pyfunction]
+fn destroy_middleware_chain(handle: u32) -> PyResult<()> {
+    middleware_chains()
+        .lock()
+        .unwrap()
+        .remove(&handle)
+        .ok_or_else(|| py_err("MiddlewareChain not found"))?;
+    Ok(())
+}
+
+// ============ Memory Stats ============
+
+#[pyfunction]
+fn memory_stats<'py>(py: Python<'py>, handle: u32) -> PyResult<Bound<'py, pyo3::types::PyAny>> {
+    let mem = memories()
+        .lock()
+        .expect("registry mutex poisoned")
+        .get(&handle)
+        .cloned()
+        .ok_or_else(|| py_err("Memory not found"))?;
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let stats = mem.stats().await.map_err(py_err)?;
+        serde_json::to_string(&stats).map_err(py_err)
+    })
+}
+
+// ============ Network Agent Cards ============
+
+#[pyfunction]
+fn network_agent_cards(handle: u32) -> PyResult<String> {
+    let net = networks()
+        .lock()
+        .unwrap()
+        .get(&handle)
+        .cloned()
+        .ok_or_else(|| py_err("Network not found"))?;
+    let guard = net.blocking_lock();
+    let cards = guard.agent_cards();
+    serde_json::to_string(&cards).map_err(py_err)
+}
+
+// ============ Checkpoint Load Latest ============
+
+#[pyfunction]
+fn checkpoint_load_latest<'py>(
+    py: Python<'py>,
+    handle: u32,
+    session_id: String,
+) -> PyResult<Bound<'py, pyo3::types::PyAny>> {
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let store = checkpoints()
+            .lock()
+            .unwrap()
+            .get(&handle)
+            .cloned()
+            .ok_or_else(|| py_err("CheckpointStore not found"))?;
+        use gauss_core::hitl::CheckpointStore;
+        match store.load_latest(&session_id).await {
+            Ok(Some(cp)) => serde_json::to_string(&cp).map_err(py_err),
+            Ok(None) => Ok("null".to_string()),
+            Err(e) => Err(py_err(e)),
+        }
+    })
+}
+
 /// Gauss Core Python module.
 #[pymodule]
 #[pyo3(name = "gauss_core")]
@@ -1429,5 +1871,26 @@ fn gauss_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Config
     m.add_function(wrap_pyfunction!(agent_config_from_json, m)?)?;
     m.add_function(wrap_pyfunction!(agent_config_resolve_env, m)?)?;
+    // Graph
+    m.add_function(wrap_pyfunction!(create_graph, m)?)?;
+    m.add_function(wrap_pyfunction!(graph_add_node, m)?)?;
+    m.add_function(wrap_pyfunction!(graph_add_edge, m)?)?;
+    m.add_function(wrap_pyfunction!(graph_run, m)?)?;
+    m.add_function(wrap_pyfunction!(destroy_graph, m)?)?;
+    // Workflow
+    m.add_function(wrap_pyfunction!(create_workflow, m)?)?;
+    m.add_function(wrap_pyfunction!(workflow_add_step, m)?)?;
+    m.add_function(wrap_pyfunction!(workflow_add_dependency, m)?)?;
+    m.add_function(wrap_pyfunction!(workflow_run, m)?)?;
+    m.add_function(wrap_pyfunction!(destroy_workflow, m)?)?;
+    // Middleware
+    m.add_function(wrap_pyfunction!(create_middleware_chain, m)?)?;
+    m.add_function(wrap_pyfunction!(middleware_use_logging, m)?)?;
+    m.add_function(wrap_pyfunction!(middleware_use_caching, m)?)?;
+    m.add_function(wrap_pyfunction!(destroy_middleware_chain, m)?)?;
+    // Additional parity functions
+    m.add_function(wrap_pyfunction!(memory_stats, m)?)?;
+    m.add_function(wrap_pyfunction!(network_agent_cards, m)?)?;
+    m.add_function(wrap_pyfunction!(checkpoint_load_latest, m)?)?;
     Ok(())
 }
