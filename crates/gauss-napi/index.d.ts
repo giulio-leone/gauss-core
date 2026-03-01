@@ -376,6 +376,6 @@ export function destroy_team(handle: number): void
 
 // ============ AGENTS.MD & SKILL.MD Parsers ============
 
-export function parse_agents_md(content: string): any
-export function discover_agents(dir: string): any
-export function parse_skill_md(content: string): any
+export function parseAgentsMd(content: string): any
+export function discoverAgents(dir: string): any
+export function parseSkillMd(content: string): any
