@@ -85,6 +85,9 @@ pub fn count_message_tokens(msg: &Message) -> usize {
             crate::message::Content::Document { data, .. } => {
                 data.as_ref().map_or(100, |d| count_tokens_approx(d))
             }
+            crate::message::Content::ExecutableCode { code, .. } => count_tokens_approx(code),
+            crate::message::Content::CodeExecutionResult { output, .. } => count_tokens_approx(output),
+            crate::message::Content::GeneratedImage { .. } => 256,
         })
         .sum::<usize>();
     content_tokens + 4

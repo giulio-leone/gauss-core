@@ -47,7 +47,7 @@ pub use code_execution::{
 };
 pub use error::GaussError;
 pub use graph::{ConsensusStrategy, Graph, GraphBuilder, GraphResult};
-pub use message::{Citation, Content, Message, Role};
+pub use message::{Citation, Content, GeneratedImageData, GroundingChunk, GroundingMetadata, ImageGenerationConfig, ImageGenerationResult, Message, Role};
 pub use provider::{GenerateOptions, Provider, ProviderCapabilities, ProviderConfig};
 pub use streaming::StreamEvent;
 pub use team::{Team, TeamBuilder, TeamOutput};

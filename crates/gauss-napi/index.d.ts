@@ -43,6 +43,12 @@ export interface AgentOptions {
     sandbox?: string
     unified?: boolean
   }
+  /** Enable Google Search grounding (Gemini only). */
+  grounding?: boolean
+  /** Enable native code execution / Gemini code interpreter. */
+  nativeCodeExecution?: boolean
+  /** Response modalities (e.g. ["TEXT", "IMAGE"] for Gemini image generation). */
+  responseModalities?: string[]
 }
 
 export interface AgentResult {
@@ -59,6 +65,7 @@ export interface AgentResult {
     start?: number
     end?: number
   }>
+  groundingMetadata?: any
 }
 
 // ============ Version ============
@@ -133,6 +140,20 @@ export function execute_code(
 ): Promise<any>
 
 export function available_runtimes(): Promise<string[]>
+
+// ============ Image Generation ============
+
+export function generate_image(
+  providerHandle: number,
+  prompt: string,
+  model?: string | undefined | null,
+  size?: string | undefined | null,
+  quality?: string | undefined | null,
+  style?: string | undefined | null,
+  aspectRatio?: string | undefined | null,
+  n?: number | undefined | null,
+  responseFormat?: string | undefined | null
+): Promise<any>
 
 // ============ Memory ============
 

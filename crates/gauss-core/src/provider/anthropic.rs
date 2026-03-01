@@ -339,6 +339,7 @@ impl AnthropicProvider {
             provider_metadata: body.get("id").cloned().unwrap_or(json!(null)),
             thinking: thinking_text,
             citations,
+            grounding_metadata: None,
         })
     }
 }

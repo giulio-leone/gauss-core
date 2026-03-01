@@ -122,7 +122,9 @@ impl GoogleProvider {
             body["generationConfig"] = gen_config;
         }
 
-        // Tools
+        // Tools (function declarations + provider features)
+        let mut tools_array: Vec<serde_json::Value> = Vec::new();
+
         if !tools.is_empty() {
             let function_declarations: Vec<serde_json::Value> = tools
                 .iter()
@@ -134,7 +136,38 @@ impl GoogleProvider {
                     })
                 })
                 .collect();
-            body["tools"] = json!([{"functionDeclarations": function_declarations}]);
+            tools_array.push(json!({"functionDeclarations": function_declarations}));
+        }
+
+        // Google Search grounding
+        if options.grounding {
+            tools_array.push(json!({"google_search": {}}));
+        }
+
+        // Native code execution (Gemini code interpreter)
+        if options.native_code_execution {
+            tools_array.push(json!({"codeExecution": {}}));
+        }
+
+        if !tools_array.is_empty() {
+            body["tools"] = json!(tools_array);
+        }
+
+        // Response modalities for image generation
+        if let Some(ref modalities) = options.response_modalities {
+            let gc = body.as_object_mut().unwrap().entry("generationConfig").or_insert(json!({}));
+            gc.as_object_mut().unwrap().remove("responseMimeType");
+            gc["responseModalities"] = json!(modalities);
+        }
+
+        // Image config (aspect ratio etc.)
+        if let Some(ref img_cfg) = options.image_config {
+            let mut ic = json!({});
+            if let Some(ref ar) = img_cfg.aspect_ratio {
+                ic["aspectRatio"] = json!(ar);
+            }
+            let gc = body.as_object_mut().unwrap().entry("generationConfig").or_insert(json!({}));
+            gc["imageConfig"] = ic;
         }
 
         body
@@ -200,6 +233,32 @@ impl GoogleProvider {
                         arguments,
                     });
                 }
+                // Gemini code execution: executable code
+                if let Some(ec) = part.get("executableCode") {
+                    content.push(Content::ExecutableCode {
+                        language: ec["language"].as_str().unwrap_or("python").to_string(),
+                        code: ec["code"].as_str().unwrap_or("").to_string(),
+                    });
+                }
+                // Gemini code execution: result
+                if let Some(cer) = part.get("codeExecutionResult") {
+                    content.push(Content::CodeExecutionResult {
+                        outcome: cer["outcome"].as_str().unwrap_or("UNKNOWN").to_string(),
+                        output: cer["output"].as_str().unwrap_or("").to_string(),
+                    });
+                }
+                // Gemini image generation: inline image data
+                if let Some(inline) = part.get("inlineData") {
+                    if let (Some(mime), Some(data)) = (
+                        inline["mimeType"].as_str(),
+                        inline["data"].as_str(),
+                    ) {
+                        content.push(Content::GeneratedImage {
+                            mime_type: mime.to_string(),
+                            data: data.to_string(),
+                        });
+                    }
+                }
             }
         }
 
@@ -219,6 +278,43 @@ impl GoogleProvider {
             cache_creation_tokens: None,
         };
 
+        // Parse grounding metadata
+        let grounding_metadata = candidate.get("groundingMetadata").map(|gm| {
+            let search_queries = gm["searchQueries"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let grounding_chunks = gm["groundingChunks"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .map(|chunk| {
+                            let web = chunk.get("web").unwrap_or(chunk);
+                            crate::message::GroundingChunk {
+                                uri: web["uri"].as_str().map(String::from),
+                                title: web["title"].as_str().map(String::from),
+                            }
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let search_entry_point = gm["searchEntryPoint"]["renderedContent"]
+                .as_str()
+                .map(String::from);
+
+            crate::message::GroundingMetadata {
+                search_queries,
+                grounding_chunks,
+                search_entry_point,
+            }
+        });
+
         Ok(GenerateResult {
             message: Message {
                 role: Role::Assistant,
@@ -230,6 +326,7 @@ impl GoogleProvider {
             provider_metadata: body.get("modelVersion").cloned().unwrap_or(json!(null)),
             thinking: None,
             citations: vec![],
+            grounding_metadata,
         })
     }
 }
@@ -254,8 +351,81 @@ impl Provider for GoogleProvider {
             grounding: true,
             code_execution: true,
             web_search: true,
+            image_generation: true,
             ..Default::default()
         }
+    }
+
+    async fn generate_image(
+        &self,
+        prompt: &str,
+        config: &crate::message::ImageGenerationConfig,
+    ) -> crate::error::Result<crate::message::ImageGenerationResult> {
+        let model = config.model.as_deref().unwrap_or(&self.model);
+        let mut options = GenerateOptions {
+            response_modalities: Some(vec!["TEXT".to_string(), "IMAGE".to_string()]),
+            image_config: Some(config.clone()),
+            ..Default::default()
+        };
+        if let Some(ref ar) = config.aspect_ratio {
+            if let Some(ref mut ic) = options.image_config {
+                ic.aspect_ratio = Some(ar.clone());
+            }
+        }
+
+        let messages = vec![crate::message::Message::user(prompt)];
+        let url = format!(
+            "{}/models/{}:generateContent?key={}",
+            self.base_url(),
+            model,
+            self.config.api_key
+        );
+        let body = self.build_request_body(&messages, &[], &options);
+
+        let mut req = self
+            .client
+            .post(&url)
+            .header("content-type", "application/json");
+
+        for (k, v) in &self.config.headers {
+            req = req.header(k, v);
+        }
+
+        let resp = req
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| GaussError::provider("google", format!("Image generation error: {e}")))?;
+
+        let status = resp.status();
+        let resp_body: serde_json::Value = resp.json().await.map_err(|e| {
+            GaussError::provider("google", format!("Failed to parse image response: {e}"))
+        })?;
+
+        if !status.is_success() {
+            let msg = resp_body["error"]["message"]
+                .as_str()
+                .unwrap_or("Unknown error");
+            return Err(GaussError::provider("google", msg));
+        }
+
+        let result = self.parse_response(&resp_body)?;
+        let mut images = Vec::new();
+
+        for c in &result.message.content {
+            if let Content::GeneratedImage { mime_type, data } = c {
+                images.push(crate::message::GeneratedImageData {
+                    url: None,
+                    base64: Some(data.clone()),
+                    mime_type: Some(mime_type.clone()),
+                });
+            }
+        }
+
+        Ok(crate::message::ImageGenerationResult {
+            images,
+            revised_prompt: None,
+        })
     }
 
     async fn generate(
@@ -434,5 +604,198 @@ impl Provider for GoogleProvider {
             .flatten();
 
         Ok(Box::new(stream))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn test_provider() -> GoogleProvider {
+        GoogleProvider::new(
+            "gemini-2.0-flash",
+            ProviderConfig::new("test-key"),
+        )
+    }
+
+    #[test]
+    fn test_grounding_adds_google_search_tool() {
+        let p = test_provider();
+        let msgs = vec![Message::user("What happened today?")];
+        let opts = GenerateOptions {
+            grounding: true,
+            ..Default::default()
+        };
+        let body = p.build_request_body(&msgs, &[], &opts);
+        let tools = body["tools"].as_array().unwrap();
+        assert!(tools.iter().any(|t| t.get("google_search").is_some()));
+    }
+
+    #[test]
+    fn test_native_code_execution_adds_tool() {
+        let p = test_provider();
+        let msgs = vec![Message::user("Calculate 2+2")];
+        let opts = GenerateOptions {
+            native_code_execution: true,
+            ..Default::default()
+        };
+        let body = p.build_request_body(&msgs, &[], &opts);
+        let tools = body["tools"].as_array().unwrap();
+        assert!(tools.iter().any(|t| t.get("codeExecution").is_some()));
+    }
+
+    #[test]
+    fn test_grounding_and_code_execution_combined() {
+        let p = test_provider();
+        let msgs = vec![Message::user("Test")];
+        let opts = GenerateOptions {
+            grounding: true,
+            native_code_execution: true,
+            ..Default::default()
+        };
+        let body = p.build_request_body(&msgs, &[], &opts);
+        let tools = body["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 2);
+    }
+
+    #[test]
+    fn test_response_modalities_for_image_gen() {
+        let p = test_provider();
+        let msgs = vec![Message::user("Draw a cat")];
+        let opts = GenerateOptions {
+            response_modalities: Some(vec!["TEXT".to_string(), "IMAGE".to_string()]),
+            ..Default::default()
+        };
+        let body = p.build_request_body(&msgs, &[], &opts);
+        let modalities = body["generationConfig"]["responseModalities"]
+            .as_array()
+            .unwrap();
+        assert_eq!(modalities.len(), 2);
+        assert_eq!(modalities[0], "TEXT");
+        assert_eq!(modalities[1], "IMAGE");
+    }
+
+    #[test]
+    fn test_image_config_aspect_ratio() {
+        let p = test_provider();
+        let msgs = vec![Message::user("Draw a landscape")];
+        let opts = GenerateOptions {
+            response_modalities: Some(vec!["TEXT".to_string(), "IMAGE".to_string()]),
+            image_config: Some(crate::message::ImageGenerationConfig {
+                aspect_ratio: Some("16:9".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let body = p.build_request_body(&msgs, &[], &opts);
+        assert_eq!(body["generationConfig"]["imageConfig"]["aspectRatio"], "16:9");
+    }
+
+    #[test]
+    fn test_parse_response_with_code_execution() {
+        let p = test_provider();
+        let resp = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        {"text": "Let me calculate that."},
+                        {"executableCode": {"language": "python", "code": "print(2+2)"}},
+                        {"codeExecutionResult": {"outcome": "SUCCESS", "output": "4\n"}}
+                    ]
+                },
+                "finishReason": "STOP"
+            }],
+            "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 20}
+        });
+
+        let result = p.parse_response(&resp).unwrap();
+        assert_eq!(result.message.content.len(), 3);
+        assert!(matches!(&result.message.content[1], Content::ExecutableCode { language, code } if language == "python" && code == "print(2+2)"));
+        assert!(matches!(&result.message.content[2], Content::CodeExecutionResult { outcome, output } if outcome == "SUCCESS" && output == "4\n"));
+    }
+
+    #[test]
+    fn test_parse_response_with_grounding_metadata() {
+        let p = test_provider();
+        let resp = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [{"text": "Spain won Euro 2024."}]
+                },
+                "finishReason": "STOP",
+                "groundingMetadata": {
+                    "searchQueries": ["Euro 2024 winner"],
+                    "groundingChunks": [{
+                        "web": {
+                            "uri": "https://example.com",
+                            "title": "Euro 2024 Results"
+                        }
+                    }],
+                    "searchEntryPoint": {
+                        "renderedContent": "<div>search widget</div>"
+                    }
+                }
+            }],
+            "usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 10}
+        });
+
+        let result = p.parse_response(&resp).unwrap();
+        let gm = result.grounding_metadata.unwrap();
+        assert_eq!(gm.search_queries, vec!["Euro 2024 winner"]);
+        assert_eq!(gm.grounding_chunks.len(), 1);
+        assert_eq!(gm.grounding_chunks[0].uri.as_deref(), Some("https://example.com"));
+        assert_eq!(gm.grounding_chunks[0].title.as_deref(), Some("Euro 2024 Results"));
+        assert!(gm.search_entry_point.is_some());
+    }
+
+    #[test]
+    fn test_parse_response_with_generated_image() {
+        let p = test_provider();
+        let resp = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        {"text": "Here is your image:"},
+                        {"inlineData": {"mimeType": "image/png", "data": "iVBORw0KGgoAAAA..."}}
+                    ]
+                },
+                "finishReason": "STOP"
+            }],
+            "usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 10}
+        });
+
+        let result = p.parse_response(&resp).unwrap();
+        assert_eq!(result.message.content.len(), 2);
+        assert!(matches!(&result.message.content[1], Content::GeneratedImage { mime_type, data } if mime_type == "image/png" && !data.is_empty()));
+    }
+
+    #[test]
+    fn test_tools_with_function_declarations_and_grounding() {
+        let p = test_provider();
+        let msgs = vec![Message::user("Search for weather")];
+        let tools = vec![
+            Tool::builder("get_weather", "Get weather for a city").build(),
+        ];
+        let opts = GenerateOptions {
+            grounding: true,
+            ..Default::default()
+        };
+        let body = p.build_request_body(&msgs, &tools, &opts);
+        let tools_arr = body["tools"].as_array().unwrap();
+        // Should have function declarations tool + google_search tool
+        assert_eq!(tools_arr.len(), 2);
+        assert!(tools_arr[0].get("functionDeclarations").is_some());
+        assert!(tools_arr[1].get("google_search").is_some());
+    }
+
+    #[test]
+    fn test_capabilities_include_new_features() {
+        let p = test_provider();
+        let caps = p.capabilities();
+        assert!(caps.grounding);
+        assert!(caps.code_execution);
+        assert!(caps.web_search);
+        assert!(caps.image_generation);
     }
 }

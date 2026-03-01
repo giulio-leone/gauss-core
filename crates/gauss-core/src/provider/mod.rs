@@ -52,6 +52,18 @@ pub struct GenerateOptions {
     /// Enable prompt caching (Anthropic). Auto-annotates system messages and tools with cache_control.
     #[serde(default)]
     pub cache_control: bool,
+    /// Enable Google Search grounding (Gemini).
+    #[serde(default)]
+    pub grounding: bool,
+    /// Enable native code execution (Gemini code interpreter).
+    #[serde(default)]
+    pub native_code_execution: bool,
+    /// Response modalities (e.g. ["TEXT", "IMAGE"] for Gemini image generation).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_modalities: Option<Vec<String>>,
+    /// Image configuration for Gemini image generation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_config: Option<crate::message::ImageGenerationConfig>,
 }
 
 /// Provider configuration.
@@ -99,6 +111,8 @@ pub struct GenerateResult {
     pub thinking: Option<String>,
     /// Citations from document-aware responses (Anthropic).
     pub citations: Vec<crate::message::Citation>,
+    /// Grounding metadata from Google Search (Gemini).
+    pub grounding_metadata: Option<crate::message::GroundingMetadata>,
 }
 
 impl GenerateResult {
@@ -169,6 +183,18 @@ pub trait Provider: Send + Sync {
         tools: &[Tool],
         options: &GenerateOptions,
     ) -> error::Result<BoxStream>;
+
+    /// Generate images from a text prompt. Not all providers support this.
+    async fn generate_image(
+        &self,
+        _prompt: &str,
+        _config: &crate::message::ImageGenerationConfig,
+    ) -> error::Result<crate::message::ImageGenerationResult> {
+        Err(error::GaussError::provider(
+            self.name(),
+            "Image generation not supported by this provider",
+        ))
+    }
 }
 
 /// Core trait for AI model providers (WASM — no Send + Sync).
@@ -199,6 +225,17 @@ pub trait Provider {
         tools: &[Tool],
         options: &GenerateOptions,
     ) -> error::Result<BoxStream>;
+
+    async fn generate_image(
+        &self,
+        _prompt: &str,
+        _config: &crate::message::ImageGenerationConfig,
+    ) -> error::Result<crate::message::ImageGenerationResult> {
+        Err(error::GaussError::provider(
+            self.name(),
+            "Image generation not supported by this provider",
+        ))
+    }
 }
 
 /// Build an HTTP client with platform-appropriate settings.

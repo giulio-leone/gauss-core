@@ -336,6 +336,22 @@ fn agent_run(
                     builder = builder.code_execution(ce_config);
                 }
             }
+
+            // Grounding (Gemini)
+            if opts.get("grounding").and_then(|v| v.as_bool()).unwrap_or(false) {
+                builder = builder.grounding(true);
+            }
+            // Native code execution (Gemini code interpreter)
+            if opts.get("native_code_execution").and_then(|v| v.as_bool()).unwrap_or(false) {
+                builder = builder.native_code_execution(true);
+            }
+            // Response modalities
+            if let Some(modalities) = opts.get("response_modalities").and_then(|v| v.as_array()) {
+                let mods: Vec<String> = modalities.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect();
+                builder = builder.response_modalities(mods);
+            }
         }
 
         let agent = builder.build();
@@ -356,6 +372,7 @@ fn agent_run(
             "text": output.text,
             "thinking": output.thinking,
             "citations": agent_citations,
+            "grounding_metadata": output.grounding_metadata,
             "steps": output.steps,
             "usage": {
                 "input_tokens": output.usage.input_tokens,
@@ -2188,6 +2205,44 @@ fn available_runtimes(py: Python<'_>) -> PyResult<Bound<'_, pyo3::types::PyAny>>
     })
 }
 
+/// Generate images using a provider's image generation API.
+#[pyfunction]
+#[pyo3(signature = (provider_handle, prompt, model=None, size=None, quality=None, style=None, aspect_ratio=None, n=None, response_format=None))]
+fn generate_image(
+    py: Python<'_>,
+    provider_handle: u32,
+    prompt: String,
+    model: Option<String>,
+    size: Option<String>,
+    quality: Option<String>,
+    style: Option<String>,
+    aspect_ratio: Option<String>,
+    n: Option<u32>,
+    response_format: Option<String>,
+) -> PyResult<Bound<'_, pyo3::types::PyAny>> {
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let provider = get_provider(provider_handle)?;
+
+        let config = gauss_core::ImageGenerationConfig {
+            model,
+            size,
+            quality,
+            style,
+            aspect_ratio,
+            n,
+            response_format,
+        };
+
+        let result = provider
+            .generate_image(&prompt, &config)
+            .await
+            .map_err(|e| PyRuntimeError::new_err(format!("Image generation error: {e}")))?;
+
+        serde_json::to_string(&result)
+            .map_err(|e| PyRuntimeError::new_err(format!("Serialize error: {e}")))
+    })
+}
+
 /// Gauss Core Python module.
 #[pymodule]
 #[pyo3(name = "_native")]
@@ -2313,5 +2368,7 @@ fn gauss_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Code Execution (PTC)
     m.add_function(wrap_pyfunction!(execute_code, m)?)?;
     m.add_function(wrap_pyfunction!(available_runtimes, m)?)?;
+    // Image Generation
+    m.add_function(wrap_pyfunction!(generate_image, m)?)?;
     Ok(())
 }

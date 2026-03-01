@@ -316,6 +316,7 @@ impl OpenAiProvider {
                 .unwrap_or(json!(null)),
             thinking: None,
             citations: vec![],
+            grounding_metadata: None,
         })
     }
 }
@@ -341,6 +342,78 @@ impl Provider for OpenAiProvider {
             image_generation: true,
             ..Default::default()
         }
+    }
+
+    async fn generate_image(
+        &self,
+        prompt: &str,
+        config: &crate::message::ImageGenerationConfig,
+    ) -> error::Result<crate::message::ImageGenerationResult> {
+        let url = format!("{}/images/generations", self.base_url());
+
+        let model = config.model.as_deref().unwrap_or("dall-e-3");
+        let mut body = json!({
+            "model": model,
+            "prompt": prompt,
+            "n": config.n.unwrap_or(1),
+            "size": config.size.as_deref().unwrap_or("1024x1024"),
+            "response_format": config.response_format.as_deref().unwrap_or("b64_json"),
+        });
+        if let Some(ref q) = config.quality {
+            body["quality"] = json!(q);
+        }
+        if let Some(ref s) = config.style {
+            body["style"] = json!(s);
+        }
+
+        let mut req = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.config.api_key))
+            .header("Content-Type", "application/json");
+
+        if let Some(ref org) = self.config.organization {
+            req = req.header("OpenAI-Organization", org);
+        }
+
+        let resp = req
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| GaussError::provider("openai", format!("Image generation error: {e}")))?;
+
+        let status = resp.status();
+        let resp_body: serde_json::Value = resp.json().await.map_err(|e| {
+            GaussError::provider("openai", format!("Failed to parse image response: {e}"))
+        })?;
+
+        if !status.is_success() {
+            let msg = resp_body["error"]["message"]
+                .as_str()
+                .unwrap_or("Unknown error");
+            return Err(GaussError::provider("openai", msg));
+        }
+
+        let mut images = Vec::new();
+        let mut revised_prompt = None;
+
+        if let Some(data_arr) = resp_body["data"].as_array() {
+            for item in data_arr {
+                if revised_prompt.is_none() {
+                    revised_prompt = item["revised_prompt"].as_str().map(String::from);
+                }
+                images.push(crate::message::GeneratedImageData {
+                    url: item["url"].as_str().map(String::from),
+                    base64: item["b64_json"].as_str().map(String::from),
+                    mime_type: Some("image/png".to_string()),
+                });
+            }
+        }
+
+        Ok(crate::message::ImageGenerationResult {
+            images,
+            revised_prompt,
+        })
     }
 
     async fn generate(

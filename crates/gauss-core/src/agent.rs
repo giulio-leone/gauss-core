@@ -51,6 +51,8 @@ pub struct AgentOutput {
     pub thinking: Option<String>,
     /// Aggregated citations from document-aware responses.
     pub citations: Vec<crate::message::Citation>,
+    /// Aggregated grounding metadata from Google Search grounding.
+    pub grounding_metadata: Vec<crate::message::GroundingMetadata>,
 }
 
 /// Result from a single agent step.
@@ -184,6 +186,7 @@ impl Agent {
         let mut step_results = Vec::new();
         let mut thinking_parts: Vec<String> = Vec::new();
         let mut all_citations: Vec<crate::message::Citation> = Vec::new();
+        let mut all_grounding: Vec<crate::message::GroundingMetadata> = Vec::new();
 
         if let Some(ref instructions) = self.instructions {
             all_messages.push(Message::system(instructions.clone()));
@@ -203,6 +206,9 @@ impl Agent {
             }
             if !result.citations.is_empty() {
                 all_citations.extend(result.citations.clone());
+            }
+            if let Some(ref gm) = result.grounding_metadata {
+                all_grounding.push(gm.clone());
             }
 
             total_usage.input_tokens += result.usage.input_tokens;
@@ -345,6 +351,7 @@ impl Agent {
                 Some(thinking_parts.join("\n\n"))
             },
             citations: all_citations,
+            grounding_metadata: all_grounding,
         })
     }
 
@@ -671,6 +678,30 @@ impl AgentBuilder {
 
     pub fn cache_control(mut self, enabled: bool) -> Self {
         self.options.cache_control = enabled;
+        self
+    }
+
+    /// Enable Google Search grounding (Gemini).
+    pub fn grounding(mut self, enabled: bool) -> Self {
+        self.options.grounding = enabled;
+        self
+    }
+
+    /// Enable native code execution (Gemini code interpreter).
+    pub fn native_code_execution(mut self, enabled: bool) -> Self {
+        self.options.native_code_execution = enabled;
+        self
+    }
+
+    /// Set response modalities (e.g. ["TEXT", "IMAGE"] for Gemini image generation).
+    pub fn response_modalities(mut self, modalities: Vec<String>) -> Self {
+        self.options.response_modalities = Some(modalities);
+        self
+    }
+
+    /// Set image config for Gemini image generation.
+    pub fn image_config(mut self, config: crate::message::ImageGenerationConfig) -> Self {
+        self.options.image_config = Some(config);
         self
     }
 

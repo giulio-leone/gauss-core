@@ -47,7 +47,7 @@ impl Provider for FailThenSucceed {
                 usage: Usage::default(),
                 finish_reason: FinishReason::Stop,
                 provider_metadata: serde_json::json!({}),
-                thinking: None, citations: vec![],
+                thinking: None, citations: vec![], grounding_metadata: None,
             })
         }
     }
@@ -138,7 +138,7 @@ impl Provider for AlwaysSucceeds {
             usage: Usage::default(),
             finish_reason: FinishReason::Stop,
             provider_metadata: serde_json::json!({}),
-            thinking: None, citations: vec![],
+            thinking: None, citations: vec![], grounding_metadata: None,
         })
     }
 

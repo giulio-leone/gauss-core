@@ -177,6 +177,12 @@ pub struct AgentOptions {
     pub cache_control: Option<bool>,
     /// Enable code execution. Pass a CodeExecutionOptions object or `true` for defaults.
     pub code_execution: Option<CodeExecutionOptions>,
+    /// Enable Google Search grounding (Gemini only).
+    pub grounding: Option<bool>,
+    /// Enable native code execution (Gemini code interpreter).
+    pub native_code_execution: Option<bool>,
+    /// Response modalities (e.g. ["TEXT", "IMAGE"] for Gemini image generation).
+    pub response_modalities: Option<Vec<String>>,
 }
 
 #[napi(object)]
@@ -225,6 +231,7 @@ pub struct AgentResult {
     pub structured_output: Option<serde_json::Value>,
     pub thinking: Option<String>,
     pub citations: Vec<NapiCitation>,
+    pub grounding_metadata: Option<serde_json::Value>,
 }
 
 fn napi_code_exec_to_config(opts: &CodeExecutionOptions) -> CodeExecutionConfig {
@@ -260,6 +267,11 @@ fn apply_code_execution(
 
 fn rust_output_to_js(output: RustAgentOutput) -> AgentResult {
     let citations = rust_citations_to_js(&output.citations);
+    let grounding = if output.grounding_metadata.is_empty() {
+        None
+    } else {
+        Some(serde_json::to_value(&output.grounding_metadata).unwrap_or(json!([])))
+    };
     AgentResult {
         text: output.text,
         steps: output.steps as u32,
@@ -268,6 +280,7 @@ fn rust_output_to_js(output: RustAgentOutput) -> AgentResult {
         structured_output: output.structured_output,
         thinking: output.thinking,
         citations,
+        grounding_metadata: grounding,
     }
 }
 
@@ -295,6 +308,9 @@ pub async fn agent_run(
         thinking_budget: None,
         cache_control: None,
         code_execution: None,
+        grounding: None,
+        native_code_execution: None,
+        response_modalities: None,
     });
 
     let mut builder = RustAgent::builder(name, provider);
@@ -331,6 +347,15 @@ pub async fn agent_run(
     }
     if let Some(ref ce) = opts.code_execution {
         builder = apply_code_execution(builder, ce);
+    }
+    if let Some(true) = opts.grounding {
+        builder = builder.grounding(true);
+    }
+    if let Some(true) = opts.native_code_execution {
+        builder = builder.native_code_execution(true);
+    }
+    if let Some(ref modalities) = opts.response_modalities {
+        builder = builder.response_modalities(modalities.clone());
     }
 
     for td in &tools {
@@ -382,6 +407,9 @@ pub async fn agent_run_with_tool_executor(
         thinking_budget: None,
         cache_control: None,
         code_execution: None,
+        grounding: None,
+        native_code_execution: None,
+        response_modalities: None,
     });
 
     let mut builder = RustAgent::builder(name, provider);
@@ -418,6 +446,15 @@ pub async fn agent_run_with_tool_executor(
     }
     if let Some(ref ce) = opts.code_execution {
         builder = apply_code_execution(builder, ce);
+    }
+    if let Some(true) = opts.grounding {
+        builder = builder.grounding(true);
+    }
+    if let Some(true) = opts.native_code_execution {
+        builder = builder.native_code_execution(true);
+    }
+    if let Some(ref modalities) = opts.response_modalities {
+        builder = builder.response_modalities(modalities.clone());
     }
 
     let tool_executor = Arc::new(tool_executor);
@@ -507,6 +544,9 @@ pub async fn agent_stream_with_tool_executor(
         thinking_budget: None,
         cache_control: None,
         code_execution: None,
+        grounding: None,
+        native_code_execution: None,
+        response_modalities: None,
     });
 
     let mut builder = RustAgent::builder(name, provider);
@@ -543,6 +583,15 @@ pub async fn agent_stream_with_tool_executor(
     }
     if let Some(ref ce) = opts.code_execution {
         builder = apply_code_execution(builder, ce);
+    }
+    if let Some(true) = opts.grounding {
+        builder = builder.grounding(true);
+    }
+    if let Some(true) = opts.native_code_execution {
+        builder = builder.native_code_execution(true);
+    }
+    if let Some(ref modalities) = opts.response_modalities {
+        builder = builder.response_modalities(modalities.clone());
     }
 
     let tool_executor = Arc::new(tool_executor);
@@ -726,6 +775,7 @@ pub async fn agent_stream_with_tool_executor(
         structured_output: None,
         thinking: None,
         citations: vec![],
+        grounding_metadata: None,
     })
 }
 
@@ -807,6 +857,54 @@ pub async fn available_runtimes() -> Result<Vec<String>> {
     Ok(orch.available_runtimes().await)
 }
 
+/// Generate an image using the provider's image generation API.
+#[napi]
+pub async fn generate_image(
+    provider_handle: u32,
+    prompt: String,
+    model: Option<String>,
+    size: Option<String>,
+    quality: Option<String>,
+    style: Option<String>,
+    aspect_ratio: Option<String>,
+    n: Option<u32>,
+    response_format: Option<String>,
+) -> Result<serde_json::Value> {
+    let provider = get_provider(provider_handle)?;
+
+    let config = gauss_core::ImageGenerationConfig {
+        model,
+        size,
+        quality,
+        style,
+        aspect_ratio,
+        n,
+        response_format,
+    };
+
+    let result = provider
+        .generate_image(&prompt, &config)
+        .await
+        .map_err(|e| napi::Error::from_reason(format!("Image generation error: {e}")))?;
+
+    let images: Vec<serde_json::Value> = result
+        .images
+        .iter()
+        .map(|img| {
+            json!({
+                "url": img.url,
+                "base64": img.base64,
+                "mimeType": img.mime_type,
+            })
+        })
+        .collect();
+
+    Ok(json!({
+        "images": images,
+        "revisedPrompt": result.revised_prompt,
+    }))
+}
+
 /// Call a provider directly (without agent loop).
 #[napi]
 pub async fn generate(
@@ -847,6 +945,7 @@ pub async fn generate(
         "text": text,
         "thinking": result.thinking,
         "citations": citations_json,
+        "groundingMetadata": result.grounding_metadata,
         "usage": {
             "inputTokens": result.usage.input_tokens,
             "outputTokens": result.usage.output_tokens,
