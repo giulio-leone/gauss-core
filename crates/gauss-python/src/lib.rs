@@ -1419,7 +1419,11 @@ fn graph_add_edge(handle: u32, from: String, to: String) -> PyResult<()> {
 }
 
 #[pyfunction]
-fn graph_run<'py>(py: Python<'py>, handle: u32, prompt: String) -> PyResult<Bound<'py, pyo3::types::PyAny>> {
+fn graph_run<'py>(
+    py: Python<'py>,
+    handle: u32,
+    prompt: String,
+) -> PyResult<Bound<'py, pyo3::types::PyAny>> {
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
         let state = {
             let g = graphs().lock().expect("registry mutex poisoned");
@@ -1589,7 +1593,11 @@ fn workflow_add_dependency(handle: u32, step_id: String, depends_on: String) -> 
 }
 
 #[pyfunction]
-fn workflow_run<'py>(py: Python<'py>, handle: u32, prompt: String) -> PyResult<Bound<'py, pyo3::types::PyAny>> {
+fn workflow_run<'py>(
+    py: Python<'py>,
+    handle: u32,
+    prompt: String,
+) -> PyResult<Bound<'py, pyo3::types::PyAny>> {
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
         let state = {
             let w = workflow_states().lock().expect("registry mutex poisoned");
@@ -1669,7 +1677,8 @@ fn destroy_workflow(handle: u32) -> PyResult<()> {
 
 // ============ Middleware ============
 
-fn middleware_chains() -> &'static Mutex<HashMap<u32, Arc<Mutex<gauss_core::middleware::MiddlewareChain>>>> {
+fn middleware_chains()
+-> &'static Mutex<HashMap<u32, Arc<Mutex<gauss_core::middleware::MiddlewareChain>>>> {
     static R: OnceLock<Mutex<HashMap<u32, Arc<Mutex<gauss_core::middleware::MiddlewareChain>>>>> =
         OnceLock::new();
     R.get_or_init(|| Mutex::new(HashMap::new()))
@@ -1678,10 +1687,10 @@ fn middleware_chains() -> &'static Mutex<HashMap<u32, Arc<Mutex<gauss_core::midd
 #[pyfunction]
 fn create_middleware_chain() -> u32 {
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    middleware_chains()
-        .lock()
-        .unwrap()
-        .insert(id, Arc::new(Mutex::new(gauss_core::middleware::MiddlewareChain::new())));
+    middleware_chains().lock().unwrap().insert(
+        id,
+        Arc::new(Mutex::new(gauss_core::middleware::MiddlewareChain::new())),
+    );
     id
 }
 
@@ -1709,7 +1718,9 @@ fn middleware_use_caching(handle: u32, ttl_ms: u32) -> PyResult<()> {
     chain
         .lock()
         .unwrap()
-        .use_middleware(Arc::new(gauss_core::middleware::CachingMiddleware::new(ttl_ms as u64)));
+        .use_middleware(Arc::new(gauss_core::middleware::CachingMiddleware::new(
+            ttl_ms as u64,
+        )));
     Ok(())
 }
 
