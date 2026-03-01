@@ -5,7 +5,7 @@ use crate::provider::FinishReason;
 
 /// Events emitted during streaming generation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum StreamEvent {
     /// A text delta (partial token).
     TextDelta(String),

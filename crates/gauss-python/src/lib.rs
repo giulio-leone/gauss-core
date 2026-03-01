@@ -1791,7 +1791,7 @@ fn checkpoint_load_latest<'py>(
 
 /// Gauss Core Python module.
 #[pymodule]
-#[pyo3(name = "gauss_core")]
+#[pyo3(name = "_native")]
 fn gauss_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Core
     m.add_function(wrap_pyfunction!(version, m)?)?;
