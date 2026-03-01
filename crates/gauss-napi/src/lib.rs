@@ -29,6 +29,10 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
+use gauss_core::code_execution::{
+    CodeExecutionConfig, CodeExecutionOrchestrator, SandboxConfig,
+};
+
 /// Global provider registry — maps handle IDs to provider instances.
 static NEXT_ID: AtomicU32 = AtomicU32::new(1);
 
@@ -171,6 +175,21 @@ pub struct AgentOptions {
     pub output_schema: Option<serde_json::Value>,
     pub thinking_budget: Option<u32>,
     pub cache_control: Option<bool>,
+    /// Enable code execution. Pass a CodeExecutionOptions object or `true` for defaults.
+    pub code_execution: Option<CodeExecutionOptions>,
+}
+
+#[napi(object)]
+pub struct CodeExecutionOptions {
+    pub python: Option<bool>,
+    pub javascript: Option<bool>,
+    pub bash: Option<bool>,
+    pub timeout_secs: Option<u32>,
+    pub working_dir: Option<String>,
+    /// Sandbox mode: "strict", "permissive", or "default" (default)
+    pub sandbox: Option<String>,
+    /// Use unified execute_code tool instead of per-language tools
+    pub unified: Option<bool>,
 }
 
 // ============ Agent Output ============
@@ -206,6 +225,37 @@ pub struct AgentResult {
     pub structured_output: Option<serde_json::Value>,
     pub thinking: Option<String>,
     pub citations: Vec<NapiCitation>,
+}
+
+fn napi_code_exec_to_config(opts: &CodeExecutionOptions) -> CodeExecutionConfig {
+    let sandbox = match opts.sandbox.as_deref() {
+        Some("strict") => SandboxConfig::strict(),
+        Some("permissive") => SandboxConfig::permissive(),
+        _ => SandboxConfig::default(),
+    };
+    CodeExecutionConfig {
+        python: opts.python.unwrap_or(true),
+        javascript: opts.javascript.unwrap_or(true),
+        bash: opts.bash.unwrap_or(true),
+        timeout: std::time::Duration::from_secs(opts.timeout_secs.unwrap_or(30) as u64),
+        working_dir: opts.working_dir.clone(),
+        env: Vec::new(),
+        sandbox,
+        interpreters: std::collections::HashMap::new(),
+    }
+}
+
+fn apply_code_execution(
+    mut builder: gauss_core::agent::AgentBuilder,
+    ce: &CodeExecutionOptions,
+) -> gauss_core::agent::AgentBuilder {
+    let config = napi_code_exec_to_config(ce);
+    if ce.unified.unwrap_or(false) {
+        builder = builder.code_execution_unified(config);
+    } else {
+        builder = builder.code_execution(config);
+    }
+    builder
 }
 
 fn rust_output_to_js(output: RustAgentOutput) -> AgentResult {
@@ -244,6 +294,7 @@ pub async fn agent_run(
         output_schema: None,
         thinking_budget: None,
         cache_control: None,
+        code_execution: None,
     });
 
     let mut builder = RustAgent::builder(name, provider);
@@ -277,6 +328,9 @@ pub async fn agent_run(
     }
     if let Some(true) = opts.cache_control {
         builder = builder.cache_control(true);
+    }
+    if let Some(ref ce) = opts.code_execution {
+        builder = apply_code_execution(builder, ce);
     }
 
     for td in &tools {
@@ -327,6 +381,7 @@ pub async fn agent_run_with_tool_executor(
         output_schema: None,
         thinking_budget: None,
         cache_control: None,
+        code_execution: None,
     });
 
     let mut builder = RustAgent::builder(name, provider);
@@ -360,6 +415,9 @@ pub async fn agent_run_with_tool_executor(
     }
     if let Some(true) = opts.cache_control {
         builder = builder.cache_control(true);
+    }
+    if let Some(ref ce) = opts.code_execution {
+        builder = apply_code_execution(builder, ce);
     }
 
     let tool_executor = Arc::new(tool_executor);
@@ -448,6 +506,7 @@ pub async fn agent_stream_with_tool_executor(
         output_schema: None,
         thinking_budget: None,
         cache_control: None,
+        code_execution: None,
     });
 
     let mut builder = RustAgent::builder(name, provider);
@@ -481,6 +540,9 @@ pub async fn agent_stream_with_tool_executor(
     }
     if let Some(true) = opts.cache_control {
         builder = builder.cache_control(true);
+    }
+    if let Some(ref ce) = opts.code_execution {
+        builder = apply_code_execution(builder, ce);
     }
 
     let tool_executor = Arc::new(tool_executor);
@@ -691,7 +753,59 @@ pub fn get_provider_capabilities(provider_handle: u32) -> Result<serde_json::Val
     }))
 }
 
-// ============ Direct Provider Call ============
+// ============ Code Execution (PTC) ============
+
+/// Execute code in a specific language runtime.
+/// Returns JSON: { stdout, stderr, exitCode, timedOut, runtime }
+#[napi]
+pub async fn execute_code(
+    language: String,
+    code: String,
+    timeout_secs: Option<u32>,
+    working_dir: Option<String>,
+    sandbox: Option<String>,
+) -> Result<serde_json::Value> {
+    let sandbox_config = match sandbox.as_deref() {
+        Some("strict") => SandboxConfig::strict(),
+        Some("permissive") => SandboxConfig::permissive(),
+        _ => SandboxConfig::default(),
+    };
+
+    let config = CodeExecutionConfig {
+        python: language == "python",
+        javascript: language == "javascript",
+        bash: language == "bash",
+        timeout: std::time::Duration::from_secs(timeout_secs.unwrap_or(30) as u64),
+        working_dir,
+        env: Vec::new(),
+        sandbox: sandbox_config,
+        interpreters: std::collections::HashMap::new(),
+    };
+
+    let orch = CodeExecutionOrchestrator::new(config);
+    let result = orch
+        .execute(&language, &code)
+        .await
+        .map_err(|e| napi::Error::from_reason(format!("Code execution error: {e}")))?;
+
+    Ok(json!({
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+        "exitCode": result.exit_code,
+        "timedOut": result.timed_out,
+        "runtime": result.runtime,
+        "success": result.success(),
+    }))
+}
+
+/// Check which code runtimes are available on this system.
+/// Returns an array of strings, e.g. ["python", "javascript", "bash"].
+#[napi]
+pub async fn available_runtimes() -> Result<Vec<String>> {
+    let config = CodeExecutionConfig::all();
+    let orch = CodeExecutionOrchestrator::new(config);
+    Ok(orch.available_runtimes().await)
+}
 
 /// Call a provider directly (without agent loop).
 #[napi]

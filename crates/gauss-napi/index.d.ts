@@ -32,6 +32,17 @@ export interface AgentOptions {
   seed?: number
   stopOnTool?: string
   outputSchema?: any
+  thinkingBudget?: number
+  cacheControl?: boolean
+  codeExecution?: {
+    python?: boolean
+    javascript?: boolean
+    bash?: boolean
+    timeoutSecs?: number
+    workingDir?: string
+    sandbox?: string
+    unified?: boolean
+  }
 }
 
 export interface AgentResult {
@@ -40,6 +51,14 @@ export interface AgentResult {
   inputTokens: number
   outputTokens: number
   structuredOutput?: any
+  thinking?: string
+  citations?: Array<{
+    citationType: string
+    citedText?: string
+    documentTitle?: string
+    start?: number
+    end?: number
+  }>
 }
 
 // ============ Version ============
@@ -86,7 +105,9 @@ export function generate(
   providerHandle: number,
   messages: JsMessage[],
   temperature?: number | undefined | null,
-  maxTokens?: number | undefined | null
+  maxTokens?: number | undefined | null,
+  thinkingBudget?: number | undefined | null,
+  cacheControl?: boolean | undefined | null
 ): Promise<any>
 
 export function generate_with_tools(
@@ -96,6 +117,22 @@ export function generate_with_tools(
   temperature?: number | undefined | null,
   maxTokens?: number | undefined | null
 ): Promise<any>
+
+// ============ Provider Capabilities ============
+
+export function get_provider_capabilities(providerHandle: number): any
+
+// ============ Code Execution (PTC) ============
+
+export function execute_code(
+  language: string,
+  code: string,
+  timeoutSecs?: number | undefined | null,
+  workingDir?: string | undefined | null,
+  sandbox?: string | undefined | null
+): Promise<any>
+
+export function available_runtimes(): Promise<string[]>
 
 // ============ Memory ============
 

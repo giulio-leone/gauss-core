@@ -302,6 +302,40 @@ fn agent_run(
             if opts["cache_control"].as_bool().unwrap_or(false) {
                 builder = builder.cache_control(true);
             }
+
+            // Code execution
+            if let Some(ce) = opts.get("code_execution").filter(|v| !v.is_null()) {
+                let ce_config = if ce.is_boolean() && ce.as_bool() == Some(true) {
+                    gauss_core::code_execution::CodeExecutionConfig::all()
+                } else if ce.is_object() {
+                    let sandbox = match ce["sandbox"].as_str() {
+                        Some("strict") => gauss_core::code_execution::SandboxConfig::strict(),
+                        Some("permissive") => gauss_core::code_execution::SandboxConfig::permissive(),
+                        _ => gauss_core::code_execution::SandboxConfig::default(),
+                    };
+                    gauss_core::code_execution::CodeExecutionConfig {
+                        python: ce["python"].as_bool().unwrap_or(true),
+                        javascript: ce["javascript"].as_bool().unwrap_or(true),
+                        bash: ce["bash"].as_bool().unwrap_or(true),
+                        timeout: std::time::Duration::from_secs(
+                            ce["timeout_secs"].as_u64().unwrap_or(30),
+                        ),
+                        working_dir: ce["working_dir"].as_str().map(|s| s.to_string()),
+                        env: Vec::new(),
+                        sandbox,
+                        interpreters: std::collections::HashMap::new(),
+                    }
+                } else {
+                    gauss_core::code_execution::CodeExecutionConfig::all()
+                };
+
+                let unified = ce.get("unified").and_then(|v| v.as_bool()).unwrap_or(false);
+                if unified {
+                    builder = builder.code_execution_unified(ce_config);
+                } else {
+                    builder = builder.code_execution(ce_config);
+                }
+            }
         }
 
         let agent = builder.build();
@@ -2093,6 +2127,67 @@ fn destroy_team(handle: u32) -> PyResult<()> {
     Ok(())
 }
 
+// ============ Code Execution (PTC) ============
+
+#[pyfunction]
+#[pyo3(signature = (language, code, timeout_secs=None, working_dir=None, sandbox=None))]
+fn execute_code(
+    py: Python<'_>,
+    language: String,
+    code: String,
+    timeout_secs: Option<u64>,
+    working_dir: Option<String>,
+    sandbox: Option<String>,
+) -> PyResult<Bound<'_, pyo3::types::PyAny>> {
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let sandbox_config = match sandbox.as_deref() {
+            Some("strict") => gauss_core::code_execution::SandboxConfig::strict(),
+            Some("permissive") => gauss_core::code_execution::SandboxConfig::permissive(),
+            _ => gauss_core::code_execution::SandboxConfig::default(),
+        };
+
+        let config = gauss_core::code_execution::CodeExecutionConfig {
+            python: language == "python",
+            javascript: language == "javascript",
+            bash: language == "bash",
+            timeout: std::time::Duration::from_secs(timeout_secs.unwrap_or(30)),
+            working_dir,
+            env: Vec::new(),
+            sandbox: sandbox_config,
+            interpreters: std::collections::HashMap::new(),
+        };
+
+        let orch = gauss_core::code_execution::CodeExecutionOrchestrator::new(config);
+        let result = orch
+            .execute(&language, &code)
+            .await
+            .map_err(|e| PyRuntimeError::new_err(format!("Code execution error: {e}")))?;
+
+        let result_json = json!({
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "exit_code": result.exit_code,
+            "timed_out": result.timed_out,
+            "runtime": result.runtime,
+            "success": result.success(),
+        });
+
+        serde_json::to_string(&result_json)
+            .map_err(|e| PyRuntimeError::new_err(format!("Serialize error: {e}")))
+    })
+}
+
+#[pyfunction]
+fn available_runtimes(py: Python<'_>) -> PyResult<Bound<'_, pyo3::types::PyAny>> {
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let config = gauss_core::code_execution::CodeExecutionConfig::all();
+        let orch = gauss_core::code_execution::CodeExecutionOrchestrator::new(config);
+        let runtimes = orch.available_runtimes().await;
+        serde_json::to_string(&runtimes)
+            .map_err(|e| PyRuntimeError::new_err(format!("Serialize error: {e}")))
+    })
+}
+
 /// Gauss Core Python module.
 #[pymodule]
 #[pyo3(name = "_native")]
@@ -2215,5 +2310,8 @@ fn gauss_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(team_set_strategy, m)?)?;
     m.add_function(wrap_pyfunction!(team_run, m)?)?;
     m.add_function(wrap_pyfunction!(destroy_team, m)?)?;
+    // Code Execution (PTC)
+    m.add_function(wrap_pyfunction!(execute_code, m)?)?;
+    m.add_function(wrap_pyfunction!(available_runtimes, m)?)?;
     Ok(())
 }
