@@ -3,6 +3,7 @@ extern crate napi_derive;
 
 use gauss_core::agent::{Agent as RustAgent, AgentOutput as RustAgentOutput, StopCondition};
 use gauss_core::context;
+use gauss_core::team;
 use gauss_core::eval;
 use gauss_core::hitl;
 use gauss_core::mcp;
@@ -2261,5 +2262,142 @@ pub fn destroy_workflow(handle: u32) -> Result<()> {
         .unwrap()
         .remove(&handle)
         .ok_or_else(|| napi::Error::from_reason("Workflow not found"))?;
+    Ok(())
+}
+
+// ============ Team ============
+
+#[derive(Clone)]
+struct TeamAgentDef {
+    name: String,
+    provider_handle: u32,
+    instructions: Option<String>,
+}
+
+#[derive(Clone)]
+struct TeamState {
+    name: String,
+    strategy: String, // "sequential" or "parallel"
+    agents: Vec<TeamAgentDef>,
+}
+
+fn teams() -> &'static Mutex<HashMap<u32, TeamState>> {
+    use std::sync::OnceLock;
+    static TEAMS: OnceLock<Mutex<HashMap<u32, TeamState>>> = OnceLock::new();
+    TEAMS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[napi]
+pub fn create_team(name: String) -> u32 {
+    static COUNTER: AtomicU32 = AtomicU32::new(1);
+    let handle = COUNTER.fetch_add(1, Ordering::Relaxed);
+    teams().lock().unwrap().insert(
+        handle,
+        TeamState {
+            name,
+            strategy: "sequential".to_string(),
+            agents: Vec::new(),
+        },
+    );
+    handle
+}
+
+#[napi]
+pub fn team_add_agent(
+    handle: u32,
+    agent_name: String,
+    provider_handle: u32,
+    instructions: Option<String>,
+) -> Result<()> {
+    let mut t = teams().lock().unwrap();
+    let state = t
+        .get_mut(&handle)
+        .ok_or_else(|| napi::Error::from_reason("Team not found"))?;
+    state.agents.push(TeamAgentDef {
+        name: agent_name,
+        provider_handle,
+        instructions,
+    });
+    Ok(())
+}
+
+#[napi]
+pub fn team_set_strategy(handle: u32, strategy: String) -> Result<()> {
+    let mut t = teams().lock().unwrap();
+    let state = t
+        .get_mut(&handle)
+        .ok_or_else(|| napi::Error::from_reason("Team not found"))?;
+    match strategy.as_str() {
+        "sequential" | "parallel" => {
+            state.strategy = strategy;
+            Ok(())
+        }
+        _ => Err(napi::Error::from_reason(format!(
+            "Unknown strategy: {strategy}. Use 'sequential' or 'parallel'"
+        ))),
+    }
+}
+
+#[napi]
+pub async fn team_run(handle: u32, messages_json: String) -> Result<serde_json::Value> {
+    let state = teams()
+        .lock()
+        .unwrap()
+        .get(&handle)
+        .cloned()
+        .ok_or_else(|| napi::Error::from_reason("Team not found"))?;
+
+    let strategy = match state.strategy.as_str() {
+        "parallel" => team::Strategy::Parallel,
+        _ => team::Strategy::Sequential,
+    };
+
+    let mut builder = team::Team::builder(&state.name).strategy(strategy);
+
+    for agent_def in &state.agents {
+        let provider = get_provider(agent_def.provider_handle)?;
+        let mut agent_builder = gauss_core::agent::Agent::builder(&agent_def.name, provider);
+        if let Some(ref instr) = agent_def.instructions {
+            agent_builder = agent_builder.instructions(instr.clone());
+        }
+        builder = builder.agent(agent_builder.build());
+    }
+
+    let team_instance = builder.build();
+
+    let messages: Vec<RustMessage> = serde_json::from_str(&messages_json)
+        .map_err(|e| napi::Error::from_reason(format!("Invalid messages JSON: {e}")))?;
+
+    let output = team_instance
+        .run(messages)
+        .await
+        .map_err(|e| napi::Error::from_reason(format!("Team run error: {e}")))?;
+
+    let results: Vec<serde_json::Value> = output
+        .results
+        .iter()
+        .map(|r| {
+            json!({
+                "text": r.text,
+                "steps": r.steps,
+                "inputTokens": r.usage.input_tokens,
+                "outputTokens": r.usage.output_tokens,
+            })
+        })
+        .collect();
+
+    Ok(json!({
+        "finalText": output.final_text,
+        "results": results,
+    }))
+}
+
+#[napi]
+pub fn destroy_team(handle: u32) -> Result<()> {
+    teams()
+        .lock()
+        .unwrap()
+        .remove(&handle)
+        .ok_or_else(|| napi::Error::from_reason("Team not found"))?;
     Ok(())
 }

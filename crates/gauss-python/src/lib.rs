@@ -8,6 +8,7 @@ use gauss_core::memory::{self, Memory as _};
 use gauss_core::message::Message as RustMessage;
 use gauss_core::network;
 use gauss_core::plugin;
+use gauss_core::team;
 use gauss_core::provider::anthropic::AnthropicProvider;
 use gauss_core::provider::deepseek::DeepSeekProvider;
 use gauss_core::provider::google::GoogleProvider;
@@ -1789,6 +1790,150 @@ fn checkpoint_load_latest<'py>(
     })
 }
 
+// ============ Team ============
+
+#[derive(Clone)]
+struct TeamAgentDef {
+    name: String,
+    provider_handle: u32,
+    instructions: Option<String>,
+}
+
+#[derive(Clone)]
+struct TeamState {
+    name: String,
+    strategy: String,
+    agents: Vec<TeamAgentDef>,
+}
+
+fn teams() -> &'static Mutex<HashMap<u32, TeamState>> {
+    static R: OnceLock<Mutex<HashMap<u32, TeamState>>> = OnceLock::new();
+    R.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[pyfunction]
+fn create_team(name: String) -> u32 {
+    static COUNTER: AtomicU32 = AtomicU32::new(1);
+    let handle = COUNTER.fetch_add(1, Ordering::Relaxed);
+    teams().lock().unwrap().insert(
+        handle,
+        TeamState {
+            name,
+            strategy: "sequential".to_string(),
+            agents: Vec::new(),
+        },
+    );
+    handle
+}
+
+#[pyfunction]
+#[pyo3(signature = (handle, agent_name, provider_handle, instructions=None))]
+fn team_add_agent(
+    handle: u32,
+    agent_name: String,
+    provider_handle: u32,
+    instructions: Option<String>,
+) -> PyResult<()> {
+    let mut t = teams().lock().unwrap();
+    let state = t
+        .get_mut(&handle)
+        .ok_or_else(|| py_err("Team not found"))?;
+    state.agents.push(TeamAgentDef {
+        name: agent_name,
+        provider_handle,
+        instructions,
+    });
+    Ok(())
+}
+
+#[pyfunction]
+fn team_set_strategy(handle: u32, strategy: String) -> PyResult<()> {
+    let mut t = teams().lock().unwrap();
+    let state = t
+        .get_mut(&handle)
+        .ok_or_else(|| py_err("Team not found"))?;
+    match strategy.as_str() {
+        "sequential" | "parallel" => {
+            state.strategy = strategy;
+            Ok(())
+        }
+        _ => Err(py_err(format!(
+            "Unknown strategy: {strategy}. Use 'sequential' or 'parallel'"
+        ))),
+    }
+}
+
+#[pyfunction]
+fn team_run<'py>(
+    py: Python<'py>,
+    handle: u32,
+    messages_json: String,
+) -> PyResult<Bound<'py, pyo3::types::PyAny>> {
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let state = teams()
+            .lock()
+            .unwrap()
+            .get(&handle)
+            .cloned()
+            .ok_or_else(|| py_err("Team not found"))?;
+
+        let strategy = match state.strategy.as_str() {
+            "parallel" => team::Strategy::Parallel,
+            _ => team::Strategy::Sequential,
+        };
+
+        let mut builder = team::Team::builder(&state.name).strategy(strategy);
+
+        for agent_def in &state.agents {
+            let provider = get_provider(agent_def.provider_handle)?;
+            let mut ab = RustAgent::builder(&agent_def.name, provider);
+            if let Some(ref instr) = agent_def.instructions {
+                ab = ab.instructions(instr.clone());
+            }
+            builder = builder.agent(ab.build());
+        }
+
+        let team_instance = builder.build();
+
+        let messages: Vec<RustMessage> = serde_json::from_str(&messages_json)
+            .map_err(|e| py_err(format!("Invalid messages JSON: {e}")))?;
+
+        let output = team_instance
+            .run(messages)
+            .await
+            .map_err(|e| py_err(format!("Team run error: {e}")))?;
+
+        let results: Vec<serde_json::Value> = output
+            .results
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "text": r.text,
+                    "steps": r.steps,
+                    "inputTokens": r.usage.input_tokens,
+                    "outputTokens": r.usage.output_tokens,
+                })
+            })
+            .collect();
+
+        serde_json::to_string(&serde_json::json!({
+            "finalText": output.final_text,
+            "results": results,
+        }))
+        .map_err(|e| py_err(format!("Serialize error: {e}")))
+    })
+}
+
+#[pyfunction]
+fn destroy_team(handle: u32) -> PyResult<()> {
+    teams()
+        .lock()
+        .unwrap()
+        .remove(&handle)
+        .ok_or_else(|| py_err("Team not found"))?;
+    Ok(())
+}
+
 /// Gauss Core Python module.
 #[pymodule]
 #[pyo3(name = "_native")]
@@ -1903,5 +2048,11 @@ fn gauss_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(memory_stats, m)?)?;
     m.add_function(wrap_pyfunction!(network_agent_cards, m)?)?;
     m.add_function(wrap_pyfunction!(checkpoint_load_latest, m)?)?;
+    // Team
+    m.add_function(wrap_pyfunction!(create_team, m)?)?;
+    m.add_function(wrap_pyfunction!(team_add_agent, m)?)?;
+    m.add_function(wrap_pyfunction!(team_set_strategy, m)?)?;
+    m.add_function(wrap_pyfunction!(team_run, m)?)?;
+    m.add_function(wrap_pyfunction!(destroy_team, m)?)?;
     Ok(())
 }

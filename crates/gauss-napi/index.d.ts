@@ -291,3 +291,16 @@ export function destroy_workflow(handle: number): void
 // ============ Stream Utils ============
 
 export function parse_partial_json(text: string): string | null
+
+// ============ Team ============
+
+export function create_team(name: string): number
+export function team_add_agent(
+  handle: number,
+  agentName: string,
+  providerHandle: number,
+  instructions?: string | undefined | null
+): void
+export function team_set_strategy(handle: number, strategy: string): void
+export function team_run(handle: number, messagesJson: string): Promise<any>
+export function destroy_team(handle: number): void
