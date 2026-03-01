@@ -82,6 +82,9 @@ pub fn count_message_tokens(msg: &Message) -> usize {
             }
             crate::message::Content::Reasoning { text } => count_tokens_approx(text),
             crate::message::Content::File { .. } => 50,
+            crate::message::Content::Document { data, .. } => {
+                data.as_ref().map_or(100, |d| count_tokens_approx(d))
+            }
         })
         .sum::<usize>();
     content_tokens + 4

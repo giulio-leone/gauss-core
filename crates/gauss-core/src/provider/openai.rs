@@ -315,6 +315,7 @@ impl OpenAiProvider {
                 .cloned()
                 .unwrap_or(json!(null)),
             thinking: None,
+            citations: vec![],
         })
     }
 }

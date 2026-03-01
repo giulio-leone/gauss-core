@@ -175,6 +175,28 @@ pub struct AgentOptions {
 // ============ Agent Output ============
 
 #[napi(object)]
+pub struct NapiCitation {
+    pub citation_type: String,
+    pub cited_text: Option<String>,
+    pub document_title: Option<String>,
+    pub start: Option<u32>,
+    pub end: Option<u32>,
+}
+
+fn rust_citations_to_js(citations: &[gauss_core::Citation]) -> Vec<NapiCitation> {
+    citations
+        .iter()
+        .map(|c| NapiCitation {
+            citation_type: c.citation_type.clone(),
+            cited_text: Some(c.cited_text.clone()),
+            document_title: c.document_title.clone(),
+            start: c.start.map(|v| v as u32),
+            end: c.end.map(|v| v as u32),
+        })
+        .collect()
+}
+
+#[napi(object)]
 pub struct AgentResult {
     pub text: String,
     pub steps: u32,
@@ -182,9 +204,11 @@ pub struct AgentResult {
     pub output_tokens: u32,
     pub structured_output: Option<serde_json::Value>,
     pub thinking: Option<String>,
+    pub citations: Vec<NapiCitation>,
 }
 
 fn rust_output_to_js(output: RustAgentOutput) -> AgentResult {
+    let citations = rust_citations_to_js(&output.citations);
     AgentResult {
         text: output.text,
         steps: output.steps as u32,
@@ -192,6 +216,7 @@ fn rust_output_to_js(output: RustAgentOutput) -> AgentResult {
         output_tokens: output.usage.output_tokens as u32,
         structured_output: output.structured_output,
         thinking: output.thinking,
+        citations,
     }
 }
 
@@ -625,6 +650,7 @@ pub async fn agent_stream_with_tool_executor(
         output_tokens: final_output_tokens,
         structured_output: None,
         thinking: None,
+        citations: vec![],
     })
 }
 
@@ -656,9 +682,18 @@ pub async fn generate(
 
     let text = result.text().unwrap_or("").to_string();
 
+    let citations_json: Vec<serde_json::Value> = result.citations.iter().map(|c| json!({
+        "type": c.citation_type,
+        "citedText": c.cited_text,
+        "documentTitle": c.document_title,
+        "start": c.start,
+        "end": c.end,
+    })).collect();
+
     Ok(json!({
         "text": text,
         "thinking": result.thinking,
+        "citations": citations_json,
         "usage": {
             "inputTokens": result.usage.input_tokens,
             "outputTokens": result.usage.output_tokens,

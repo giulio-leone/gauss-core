@@ -170,6 +170,34 @@ impl AnthropicProvider {
                         "data": base64
                     }
                 })),
+                Content::Document {
+                    source_type,
+                    data,
+                    media_type,
+                    title,
+                    citations_enabled,
+                } => {
+                    let mut source = json!({
+                        "type": source_type,
+                    });
+                    if let Some(d) = data {
+                        source["data"] = json!(d);
+                    }
+                    if let Some(mt) = media_type {
+                        source["media_type"] = json!(mt);
+                    }
+                    if *citations_enabled {
+                        source["citations"] = json!({"enabled": true});
+                    }
+                    let mut doc = json!({
+                        "type": "document",
+                        "source": source,
+                    });
+                    if let Some(t) = title {
+                        doc["title"] = json!(t);
+                    }
+                    Some(doc)
+                }
                 _ => None,
             })
             .collect();
@@ -206,6 +234,7 @@ impl AnthropicProvider {
     fn parse_response(&self, body: &serde_json::Value) -> crate::error::Result<GenerateResult> {
         let mut content = Vec::new();
         let mut thinking_text: Option<String> = None;
+        let mut citations = Vec::new();
 
         if let Some(blocks) = body["content"].as_array() {
             for block in blocks {
@@ -220,6 +249,32 @@ impl AnthropicProvider {
                             content.push(Content::Text {
                                 text: text.to_string(),
                             });
+                        }
+                        // Parse citations from text blocks
+                        if let Some(cits) = block["citations"].as_array() {
+                            for cit in cits {
+                                citations.push(crate::message::Citation {
+                                    citation_type: cit["type"]
+                                        .as_str()
+                                        .unwrap_or("unknown")
+                                        .to_string(),
+                                    cited_text: cit["cited_text"]
+                                        .as_str()
+                                        .unwrap_or("")
+                                        .to_string(),
+                                    document_title: cit["document_title"]
+                                        .as_str()
+                                        .map(|s| s.to_string()),
+                                    start: cit["start_char_index"]
+                                        .as_u64()
+                                        .or_else(|| cit["start_page"].as_u64())
+                                        .or_else(|| cit["start_block_index"].as_u64()),
+                                    end: cit["end_char_index"]
+                                        .as_u64()
+                                        .or_else(|| cit["end_page"].as_u64())
+                                        .or_else(|| cit["end_block_index"].as_u64()),
+                                });
+                            }
                         }
                     }
                     Some("tool_use") => {
@@ -263,6 +318,7 @@ impl AnthropicProvider {
             finish_reason,
             provider_metadata: body.get("id").cloned().unwrap_or(json!(null)),
             thinking: thinking_text,
+            citations,
         })
     }
 }

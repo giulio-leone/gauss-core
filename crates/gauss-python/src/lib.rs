@@ -159,9 +159,18 @@ fn generate(
 
         let text = result.text().unwrap_or("").to_string();
 
+        let citations_json: Vec<serde_json::Value> = result.citations.iter().map(|c| json!({
+            "type": c.citation_type,
+            "cited_text": c.cited_text,
+            "document_title": c.document_title,
+            "start": c.start,
+            "end": c.end,
+        })).collect();
+
         let output = json!({
             "text": text,
             "thinking": result.thinking,
+            "citations": citations_json,
             "usage": {
                 "input_tokens": result.usage.input_tokens,
                 "output_tokens": result.usage.output_tokens,
@@ -270,9 +279,18 @@ fn agent_run(
             .await
             .map_err(|e| PyRuntimeError::new_err(format!("Agent error: {e}")))?;
 
+        let agent_citations: Vec<serde_json::Value> = output.citations.iter().map(|c| json!({
+            "type": c.citation_type,
+            "cited_text": c.cited_text,
+            "document_title": c.document_title,
+            "start": c.start,
+            "end": c.end,
+        })).collect();
+
         let result = json!({
             "text": output.text,
             "thinking": output.thinking,
+            "citations": agent_citations,
             "steps": output.steps,
             "usage": {
                 "input_tokens": output.usage.input_tokens,

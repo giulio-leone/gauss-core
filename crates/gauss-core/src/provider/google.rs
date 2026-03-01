@@ -229,6 +229,7 @@ impl GoogleProvider {
             finish_reason,
             provider_metadata: body.get("modelVersion").cloned().unwrap_or(json!(null)),
             thinking: None,
+            citations: vec![],
         })
     }
 }

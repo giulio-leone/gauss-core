@@ -94,6 +94,8 @@ pub struct GenerateResult {
     pub provider_metadata: serde_json::Value,
     /// Anthropic extended thinking output (if enabled).
     pub thinking: Option<String>,
+    /// Citations from document-aware responses (Anthropic).
+    pub citations: Vec<crate::message::Citation>,
 }
 
 impl GenerateResult {

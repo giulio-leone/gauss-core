@@ -49,6 +49,8 @@ pub struct AgentOutput {
     pub structured_output: Option<serde_json::Value>,
     /// Aggregated thinking output from extended thinking (Anthropic).
     pub thinking: Option<String>,
+    /// Aggregated citations from document-aware responses.
+    pub citations: Vec<crate::message::Citation>,
 }
 
 /// Result from a single agent step.
@@ -181,6 +183,7 @@ impl Agent {
         let mut total_usage = Usage::default();
         let mut step_results = Vec::new();
         let mut thinking_parts: Vec<String> = Vec::new();
+        let mut all_citations: Vec<crate::message::Citation> = Vec::new();
 
         if let Some(ref instructions) = self.instructions {
             all_messages.push(Message::system(instructions.clone()));
@@ -197,6 +200,9 @@ impl Agent {
 
             if let Some(ref t) = result.thinking {
                 thinking_parts.push(t.clone());
+            }
+            if !result.citations.is_empty() {
+                all_citations.extend(result.citations.clone());
             }
 
             total_usage.input_tokens += result.usage.input_tokens;
@@ -338,6 +344,7 @@ impl Agent {
             } else {
                 Some(thinking_parts.join("\n\n"))
             },
+            citations: all_citations,
         })
     }
 

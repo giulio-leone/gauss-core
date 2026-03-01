@@ -55,6 +55,36 @@ pub enum Content {
         #[serde(skip_serializing_if = "Option::is_none")]
         media_type: Option<String>,
     },
+    /// Document for citation-aware responses (Anthropic).
+    Document {
+        source_type: String, // "text", "base64", "url"
+        #[serde(skip_serializing_if = "Option::is_none")]
+        data: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        media_type: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        #[serde(default)]
+        citations_enabled: bool,
+    },
+}
+
+/// A citation referencing a source document.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Citation {
+    /// Citation type: "char_location", "page_location", "content_block_location".
+    pub citation_type: String,
+    /// The cited text from the source document.
+    pub cited_text: String,
+    /// Document title (if available).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub document_title: Option<String>,
+    /// Start index (character offset for char_location, page for page_location).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start: Option<u64>,
+    /// End index.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end: Option<u64>,
 }
 
 /// A single message in a conversation.
