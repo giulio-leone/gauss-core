@@ -270,6 +270,17 @@ export function graph_add_node(
   tools?: ToolDef[]
 ): void
 export function graph_add_edge(handle: number, from: string, to: string): void
+export interface ForkAgentDef {
+  agentName: string
+  providerHandle: number
+  instructions?: string | undefined | null
+}
+export function graph_add_fork_node(
+  handle: number,
+  nodeId: string,
+  agents: ForkAgentDef[],
+  consensus: string
+): void
 export function graph_run(handle: number, prompt: string): Promise<any>
 export function destroy_graph(handle: number): void
 

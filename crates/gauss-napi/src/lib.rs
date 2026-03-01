@@ -1966,8 +1966,13 @@ fn graphs() -> &'static Mutex<HashMap<u32, GraphState>> {
 }
 
 struct GraphState {
-    nodes: Vec<GraphNodeDef>,
+    nodes: Vec<GraphNodeDefKind>,
     edges: Vec<(String, String)>,
+}
+
+enum GraphNodeDefKind {
+    Agent(GraphNodeDef),
+    Fork(GraphForkDef),
 }
 
 struct GraphNodeDef {
@@ -1976,6 +1981,12 @@ struct GraphNodeDef {
     provider_handle: u32,
     instructions: Option<String>,
     tools: Vec<(String, String, Option<serde_json::Value>)>,
+}
+
+struct GraphForkDef {
+    id: String,
+    agents: Vec<GraphNodeDef>,
+    consensus: String, // "first" | "concat"
 }
 
 #[napi]
@@ -2004,7 +2015,7 @@ pub fn graph_add_node(
     let state = g
         .get_mut(&handle)
         .ok_or_else(|| napi::Error::from_reason("Graph not found"))?;
-    state.nodes.push(GraphNodeDef {
+    state.nodes.push(GraphNodeDefKind::Agent(GraphNodeDef {
         id: node_id,
         agent_name,
         provider_handle,
@@ -2013,7 +2024,7 @@ pub fn graph_add_node(
             .into_iter()
             .map(|t| (t.name, t.description, t.parameters))
             .collect(),
-    });
+    }));
     Ok(())
 }
 
@@ -2027,62 +2038,155 @@ pub fn graph_add_edge(handle: u32, from: String, to: String) -> Result<()> {
     Ok(())
 }
 
+#[napi(object)]
+pub struct ForkAgentDef {
+    pub agent_name: String,
+    pub provider_handle: u32,
+    pub instructions: Option<String>,
+}
+
+#[napi]
+pub fn graph_add_fork_node(
+    handle: u32,
+    node_id: String,
+    agents: Vec<ForkAgentDef>,
+    consensus: String,
+) -> Result<()> {
+    let mut g = graphs().lock().expect("registry mutex poisoned");
+    let state = g
+        .get_mut(&handle)
+        .ok_or_else(|| napi::Error::from_reason("Graph not found"))?;
+    state.nodes.push(GraphNodeDefKind::Fork(GraphForkDef {
+        id: node_id,
+        agents: agents
+            .into_iter()
+            .map(|a| GraphNodeDef {
+                id: a.agent_name.clone(),
+                agent_name: a.agent_name,
+                provider_handle: a.provider_handle,
+                instructions: a.instructions,
+                tools: vec![],
+            })
+            .collect(),
+        consensus,
+    }));
+    Ok(())
+}
+
 #[napi]
 pub async fn graph_run(handle: u32, prompt: String) -> Result<serde_json::Value> {
-    let state = {
+    // Snapshot state for async context
+    enum NodeSnapshot {
+        Agent {
+            id: String,
+            agent_name: String,
+            provider_handle: u32,
+            instructions: Option<String>,
+            tools: Vec<(String, String, Option<serde_json::Value>)>,
+        },
+        Fork {
+            id: String,
+            agents: Vec<(String, u32, Option<String>)>, // (name, prov_handle, instructions)
+            consensus: String,
+        },
+    }
+
+    let (snapshots, edges) = {
         let g = graphs().lock().expect("registry mutex poisoned");
         let s = g
             .get(&handle)
             .ok_or_else(|| napi::Error::from_reason("Graph not found"))?;
-        // Clone node configs for async context
-        let nodes: Vec<_> = s
+        let snapshots: Vec<NodeSnapshot> = s
             .nodes
             .iter()
-            .map(|n| {
-                (
-                    n.id.clone(),
-                    n.agent_name.clone(),
-                    n.provider_handle,
-                    n.instructions.clone(),
-                    n.tools.clone(),
-                )
+            .map(|n| match n {
+                GraphNodeDefKind::Agent(a) => NodeSnapshot::Agent {
+                    id: a.id.clone(),
+                    agent_name: a.agent_name.clone(),
+                    provider_handle: a.provider_handle,
+                    instructions: a.instructions.clone(),
+                    tools: a.tools.clone(),
+                },
+                GraphNodeDefKind::Fork(f) => NodeSnapshot::Fork {
+                    id: f.id.clone(),
+                    agents: f
+                        .agents
+                        .iter()
+                        .map(|a| {
+                            (
+                                a.agent_name.clone(),
+                                a.provider_handle,
+                                a.instructions.clone(),
+                            )
+                        })
+                        .collect(),
+                    consensus: f.consensus.clone(),
+                },
             })
             .collect();
-        let edges = s.edges.clone();
-        (nodes, edges)
+        (snapshots, s.edges.clone())
     };
 
-    let (node_defs, edges) = state;
-
-    // Build a gauss_core::Graph
     let mut builder = gauss_core::Graph::builder();
 
-    for (node_id, agent_name, prov_handle, instructions, tools) in &node_defs {
-        let provider = {
-            let provs = providers().lock().expect("registry mutex poisoned");
-            provs.get(prov_handle).cloned().ok_or_else(|| {
-                napi::Error::from_reason(format!("Provider {prov_handle} not found"))
-            })?
-        };
-
-        let mut agent_builder = RustAgent::builder(agent_name.clone(), provider);
-        if let Some(instr) = instructions {
-            agent_builder = agent_builder.instructions(instr.clone());
-        }
-        for (name, desc, params) in tools {
-            let mut tb = RustTool::builder(name, desc);
-            if let Some(p) = params {
-                tb = tb.parameters_json(p.clone());
+    for snap in &snapshots {
+        match snap {
+            NodeSnapshot::Agent {
+                id,
+                agent_name,
+                provider_handle,
+                instructions,
+                tools,
+            } => {
+                let provider = {
+                    let provs = providers().lock().expect("registry mutex poisoned");
+                    provs.get(provider_handle).cloned().ok_or_else(|| {
+                        napi::Error::from_reason(format!("Provider {provider_handle} not found"))
+                    })?
+                };
+                let mut ab = RustAgent::builder(agent_name.clone(), provider);
+                if let Some(instr) = instructions {
+                    ab = ab.instructions(instr.clone());
+                }
+                for (name, desc, params) in tools {
+                    let mut tb = RustTool::builder(name, desc);
+                    if let Some(p) = params {
+                        tb = tb.parameters_json(p.clone());
+                    }
+                    ab = ab.tool(tb.build());
+                }
+                let agent = ab.build();
+                let nid = id.clone();
+                builder = builder.node(nid, agent, |_deps| {
+                    vec![RustMessage::user("Continue based on prior context.")]
+                });
             }
-            agent_builder = agent_builder.tool(tb.build());
+            NodeSnapshot::Fork {
+                id,
+                agents,
+                consensus,
+            } => {
+                let mut fork_agents: Vec<(String, gauss_core::Agent)> = Vec::new();
+                for (name, prov_handle, instructions) in agents {
+                    let provider = {
+                        let provs = providers().lock().expect("registry mutex poisoned");
+                        provs.get(prov_handle).cloned().ok_or_else(|| {
+                            napi::Error::from_reason(format!("Provider {prov_handle} not found"))
+                        })?
+                    };
+                    let mut ab = RustAgent::builder(name.clone(), provider);
+                    if let Some(instr) = instructions {
+                        ab = ab.instructions(instr.clone());
+                    }
+                    fork_agents.push((name.clone(), ab.build()));
+                }
+                let strategy = match consensus.as_str() {
+                    "first" => gauss_core::graph::ConsensusStrategy::First,
+                    _ => gauss_core::graph::ConsensusStrategy::Concat,
+                };
+                builder = builder.fork(id.clone(), fork_agents, strategy);
+            }
         }
-        let agent = agent_builder.build();
-
-        let nid = node_id.clone();
-        builder = builder.node(nid, agent, |_deps| {
-            // Pass completed node outputs as context messages
-            vec![RustMessage::user("Continue based on prior context.")]
-        });
     }
 
     for (from, to) in &edges {

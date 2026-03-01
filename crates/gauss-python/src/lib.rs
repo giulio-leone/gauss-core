@@ -1354,8 +1354,19 @@ struct GraphNodeDef {
     tools: Vec<(String, String, Option<serde_json::Value>)>,
 }
 
+struct GraphForkDef {
+    id: String,
+    agents: Vec<GraphNodeDef>,
+    consensus: String,
+}
+
+enum GraphNodeDefKind {
+    Agent(GraphNodeDef),
+    Fork(GraphForkDef),
+}
+
 struct GraphState {
-    nodes: Vec<GraphNodeDef>,
+    nodes: Vec<GraphNodeDefKind>,
     edges: Vec<(String, String)>,
 }
 
@@ -1406,13 +1417,13 @@ fn graph_add_node(
     let state = g
         .get_mut(&handle)
         .ok_or_else(|| py_err("Graph not found"))?;
-    state.nodes.push(GraphNodeDef {
+    state.nodes.push(GraphNodeDefKind::Agent(GraphNodeDef {
         id: node_id,
         agent_name,
         provider_handle,
         instructions,
         tools,
-    });
+    }));
     Ok(())
 }
 
@@ -1427,53 +1438,145 @@ fn graph_add_edge(handle: u32, from: String, to: String) -> PyResult<()> {
 }
 
 #[pyfunction]
+#[pyo3(signature = (handle, node_id, agents_json, consensus))]
+fn graph_add_fork_node(
+    handle: u32,
+    node_id: String,
+    agents_json: String,
+    consensus: String,
+) -> PyResult<()> {
+    let parsed: Vec<serde_json::Value> = serde_json::from_str(&agents_json).map_err(py_err)?;
+    let agents = parsed
+        .into_iter()
+        .map(|a| {
+            let name = a["agent_name"].as_str().unwrap_or("").to_string();
+            GraphNodeDef {
+                id: name.clone(),
+                agent_name: name,
+                provider_handle: a["provider_handle"].as_u64().unwrap_or(0) as u32,
+                instructions: a["instructions"].as_str().map(|s| s.to_string()),
+                tools: vec![],
+            }
+        })
+        .collect();
+    let mut g = graphs().lock().expect("registry mutex poisoned");
+    let state = g
+        .get_mut(&handle)
+        .ok_or_else(|| py_err("Graph not found"))?;
+    state.nodes.push(GraphNodeDefKind::Fork(GraphForkDef {
+        id: node_id,
+        agents,
+        consensus,
+    }));
+    Ok(())
+}
+
+#[pyfunction]
 fn graph_run<'py>(
     py: Python<'py>,
     handle: u32,
     prompt: String,
 ) -> PyResult<Bound<'py, pyo3::types::PyAny>> {
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
-        let state = {
+        enum NodeSnapshot {
+            Agent {
+                id: String,
+                agent_name: String,
+                provider_handle: u32,
+                instructions: Option<String>,
+                tools: Vec<(String, String, Option<serde_json::Value>)>,
+            },
+            Fork {
+                id: String,
+                agents: Vec<(String, u32, Option<String>)>,
+                consensus: String,
+            },
+        }
+
+        let (snapshots, edges) = {
             let g = graphs().lock().expect("registry mutex poisoned");
             let s = g.get(&handle).ok_or_else(|| py_err("Graph not found"))?;
-            let nodes: Vec<_> = s
+            let snapshots: Vec<NodeSnapshot> = s
                 .nodes
                 .iter()
-                .map(|n| {
-                    (
-                        n.id.clone(),
-                        n.agent_name.clone(),
-                        n.provider_handle,
-                        n.instructions.clone(),
-                        n.tools.clone(),
-                    )
+                .map(|n| match n {
+                    GraphNodeDefKind::Agent(a) => NodeSnapshot::Agent {
+                        id: a.id.clone(),
+                        agent_name: a.agent_name.clone(),
+                        provider_handle: a.provider_handle,
+                        instructions: a.instructions.clone(),
+                        tools: a.tools.clone(),
+                    },
+                    GraphNodeDefKind::Fork(f) => NodeSnapshot::Fork {
+                        id: f.id.clone(),
+                        agents: f
+                            .agents
+                            .iter()
+                            .map(|a| {
+                                (
+                                    a.agent_name.clone(),
+                                    a.provider_handle,
+                                    a.instructions.clone(),
+                                )
+                            })
+                            .collect(),
+                        consensus: f.consensus.clone(),
+                    },
                 })
                 .collect();
-            let edges = s.edges.clone();
-            Ok::<_, PyErr>((nodes, edges))
+            Ok::<_, PyErr>((snapshots, s.edges.clone()))
         }?;
 
-        let (node_defs, edges) = state;
         let mut builder = gauss_core::Graph::builder();
 
-        for (node_id, agent_name, prov_handle, instructions, tools) in &node_defs {
-            let provider = get_provider(*prov_handle)?;
-            let mut agent_builder = RustAgent::builder(agent_name.clone(), provider);
-            if let Some(instr) = instructions {
-                agent_builder = agent_builder.instructions(instr.clone());
-            }
-            for (name, desc, params) in tools {
-                let mut tb = gauss_core::tool::Tool::builder(name, desc);
-                if let Some(p) = params {
-                    tb = tb.parameters_json(p.clone());
+        for snap in &snapshots {
+            match snap {
+                NodeSnapshot::Agent {
+                    id,
+                    agent_name,
+                    provider_handle,
+                    instructions,
+                    tools,
+                } => {
+                    let provider = get_provider(*provider_handle)?;
+                    let mut ab = RustAgent::builder(agent_name.clone(), provider);
+                    if let Some(instr) = instructions {
+                        ab = ab.instructions(instr.clone());
+                    }
+                    for (name, desc, params) in tools {
+                        let mut tb = gauss_core::tool::Tool::builder(name, desc);
+                        if let Some(p) = params {
+                            tb = tb.parameters_json(p.clone());
+                        }
+                        ab = ab.tool(tb.build());
+                    }
+                    let agent = ab.build();
+                    let nid = id.clone();
+                    builder = builder.node(nid, agent, |_deps| {
+                        vec![RustMessage::user("Continue based on prior context.")]
+                    });
                 }
-                agent_builder = agent_builder.tool(tb.build());
+                NodeSnapshot::Fork {
+                    id,
+                    agents,
+                    consensus,
+                } => {
+                    let mut fork_agents: Vec<(String, gauss_core::Agent)> = Vec::new();
+                    for (name, prov_handle, instructions) in agents {
+                        let provider = get_provider(*prov_handle)?;
+                        let mut ab = RustAgent::builder(name.clone(), provider);
+                        if let Some(instr) = instructions {
+                            ab = ab.instructions(instr.clone());
+                        }
+                        fork_agents.push((name.clone(), ab.build()));
+                    }
+                    let strategy = match consensus.as_str() {
+                        "first" => gauss_core::graph::ConsensusStrategy::First,
+                        _ => gauss_core::graph::ConsensusStrategy::Concat,
+                    };
+                    builder = builder.fork(id.clone(), fork_agents, strategy);
+                }
             }
-            let agent = agent_builder.build();
-            let nid = node_id.clone();
-            builder = builder.node(nid, agent, |_deps| {
-                vec![RustMessage::user("Continue based on prior context.")]
-            });
         }
 
         for (from, to) in &edges {
@@ -2038,6 +2141,7 @@ fn gauss_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(create_graph, m)?)?;
     m.add_function(wrap_pyfunction!(graph_add_node, m)?)?;
     m.add_function(wrap_pyfunction!(graph_add_edge, m)?)?;
+    m.add_function(wrap_pyfunction!(graph_add_fork_node, m)?)?;
     m.add_function(wrap_pyfunction!(graph_run, m)?)?;
     m.add_function(wrap_pyfunction!(destroy_graph, m)?)?;
     // Workflow
