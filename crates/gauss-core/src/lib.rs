@@ -6,6 +6,8 @@
 //! RAG, MCP, middleware, observability, and multi-agent networks.
 
 pub mod agent;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod code_execution;
 pub mod config;
 pub mod context;
 pub mod error;
@@ -37,6 +39,11 @@ pub type Shared<T> = std::sync::Arc<T>;
 pub type Shared<T> = std::rc::Rc<T>;
 
 pub use agent::{Agent, AgentBuilder, AgentOutput};
+#[cfg(not(target_arch = "wasm32"))]
+pub use code_execution::{
+    BashRuntime, CodeRuntime, ExecutionResult, JavaScriptRuntime, PythonRuntime, RuntimeConfig,
+    code_execution_tool,
+};
 pub use error::GaussError;
 pub use graph::{ConsensusStrategy, Graph, GraphBuilder, GraphResult};
 pub use message::{Citation, Content, Message, Role};
