@@ -1,17 +1,17 @@
-pub mod registry;
-pub mod types;
-pub mod provider;
 pub mod agent;
 pub mod code_exec;
-pub mod memory;
-pub mod mcp;
-pub mod network;
-pub mod middleware;
-pub mod hitl;
+pub mod config;
 pub mod eval;
+pub mod hitl;
+pub mod mcp;
+pub mod memory;
+pub mod middleware;
+pub mod network;
 pub mod orchestration;
 pub mod plugin;
-pub mod config;
+pub mod provider;
+pub mod registry;
+pub mod types;
 
 use pyo3::prelude::*;
 
@@ -30,6 +30,7 @@ fn gauss_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(provider::create_provider, m)?)?;
     m.add_function(wrap_pyfunction!(provider::destroy_provider, m)?)?;
     m.add_function(wrap_pyfunction!(provider::get_provider_capabilities, m)?)?;
+    m.add_function(wrap_pyfunction!(provider::estimate_cost, m)?)?;
     m.add_function(wrap_pyfunction!(code_exec::generate, m)?)?;
     m.add_function(wrap_pyfunction!(code_exec::generate_with_tools, m)?)?;
     m.add_function(wrap_pyfunction!(code_exec::stream_generate, m)?)?;
@@ -93,10 +94,22 @@ fn gauss_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(eval::destroy_telemetry, m)?)?;
     // Guardrails
     m.add_function(wrap_pyfunction!(middleware::create_guardrail_chain, m)?)?;
-    m.add_function(wrap_pyfunction!(middleware::guardrail_chain_add_content_moderation, m)?)?;
-    m.add_function(wrap_pyfunction!(middleware::guardrail_chain_add_pii_detection, m)?)?;
-    m.add_function(wrap_pyfunction!(middleware::guardrail_chain_add_token_limit, m)?)?;
-    m.add_function(wrap_pyfunction!(middleware::guardrail_chain_add_regex_filter, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        middleware::guardrail_chain_add_content_moderation,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        middleware::guardrail_chain_add_pii_detection,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        middleware::guardrail_chain_add_token_limit,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        middleware::guardrail_chain_add_regex_filter,
+        m
+    )?)?;
     m.add_function(wrap_pyfunction!(middleware::guardrail_chain_add_schema, m)?)?;
     m.add_function(wrap_pyfunction!(middleware::guardrail_chain_list, m)?)?;
     m.add_function(wrap_pyfunction!(middleware::destroy_guardrail_chain, m)?)?;
@@ -137,6 +150,7 @@ fn gauss_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(middleware::create_middleware_chain, m)?)?;
     m.add_function(wrap_pyfunction!(middleware::middleware_use_logging, m)?)?;
     m.add_function(wrap_pyfunction!(middleware::middleware_use_caching, m)?)?;
+    m.add_function(wrap_pyfunction!(middleware::middleware_use_rate_limit, m)?)?;
     m.add_function(wrap_pyfunction!(middleware::destroy_middleware_chain, m)?)?;
     // Additional parity functions
     m.add_function(wrap_pyfunction!(memory::memory_stats, m)?)?;

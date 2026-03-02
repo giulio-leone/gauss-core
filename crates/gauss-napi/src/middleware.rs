@@ -1,8 +1,8 @@
 use crate::provider::PROVIDERS;
-use crate::registry::{next_handle, HandleRegistry};
-use gauss_core::{guardrail, middleware, resilience};
-use gauss_core::provider::retry::RetryConfig;
+use crate::registry::{HandleRegistry, next_handle};
 use gauss_core::provider::Provider;
+use gauss_core::provider::retry::RetryConfig;
+use gauss_core::{guardrail, middleware, resilience};
 use napi::bindgen_prelude::*;
 use std::sync::{Arc, Mutex};
 
@@ -33,6 +33,23 @@ pub fn middleware_use_caching(handle: u32, ttl_ms: u32) -> Result<()> {
         .lock()
         .unwrap()
         .use_middleware(Arc::new(middleware::CachingMiddleware::new(ttl_ms as u64)));
+    Ok(())
+}
+
+#[napi]
+pub fn middleware_use_rate_limit(
+    handle: u32,
+    requests_per_minute: u32,
+    burst: Option<u32>,
+) -> Result<()> {
+    let chain = MIDDLEWARE_CHAINS.get_clone(handle)?;
+    chain
+        .lock()
+        .unwrap()
+        .use_middleware(Arc::new(middleware::RateLimitMiddleware::new(
+            requests_per_minute,
+            burst,
+        )));
     Ok(())
 }
 

@@ -2,6 +2,7 @@
 
 use crate::provider::ProviderConfig;
 use crate::provider::openai::OpenAiProvider;
+use crate::provider::openai_compatible::create_openai_compatible;
 
 const OLLAMA_BASE_URL: &str = "http://localhost:11434/v1";
 
@@ -12,10 +13,7 @@ impl OllamaProvider {
     /// Create an Ollama provider.
     /// Models: llama3.3, codellama, mistral, phi3, etc.
     /// Ollama does not require an API key — pass any string.
-    pub fn create(model: impl Into<String>, mut config: ProviderConfig) -> OpenAiProvider {
-        if config.base_url.is_none() {
-            config.base_url = Some(OLLAMA_BASE_URL.to_string());
-        }
-        OpenAiProvider::new(model, config)
+    pub fn create(model: impl Into<String>, config: ProviderConfig) -> OpenAiProvider {
+        create_openai_compatible(model, config, OLLAMA_BASE_URL)
     }
 }

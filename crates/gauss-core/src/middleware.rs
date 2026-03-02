@@ -443,6 +443,102 @@ pub struct CachingMiddleware {
     ttl_ms: u64,
 }
 
+/// Token-bucket rate limiting middleware.
+#[derive(Debug)]
+pub struct RateLimitMiddleware {
+    buckets: std::sync::Mutex<HashMap<String, TokenBucket>>,
+    refill_per_ms: f64,
+    burst: f64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TokenBucket {
+    tokens: f64,
+    last_refill_ms: u64,
+}
+
+impl RateLimitMiddleware {
+    /// Create a rate limiter with requests-per-minute and optional burst size.
+    pub fn new(requests_per_minute: u32, burst: Option<u32>) -> Self {
+        let rpm = requests_per_minute.max(1) as f64;
+        let burst = burst.unwrap_or(requests_per_minute.max(1)) as f64;
+        Self {
+            buckets: std::sync::Mutex::new(HashMap::new()),
+            refill_per_ms: rpm / 60_000.0,
+            burst,
+        }
+    }
+
+    fn now_millis() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64
+    }
+
+    fn acquire(&self, key: &str, now: u64) -> error::Result<(bool, Option<u64>)> {
+        let mut buckets = self
+            .buckets
+            .lock()
+            .map_err(|e| error::GaussError::internal(e.to_string()))?;
+
+        let entry = buckets.entry(key.to_string()).or_insert(TokenBucket {
+            tokens: self.burst,
+            last_refill_ms: now,
+        });
+
+        let elapsed = now.saturating_sub(entry.last_refill_ms) as f64;
+        entry.tokens = (entry.tokens + elapsed * self.refill_per_ms).min(self.burst);
+        entry.last_refill_ms = now;
+
+        if entry.tokens >= 1.0 {
+            entry.tokens -= 1.0;
+            return Ok((true, None));
+        }
+
+        if self.refill_per_ms <= f64::EPSILON {
+            return Ok((false, Some(60_000)));
+        }
+
+        let missing = (1.0 - entry.tokens).max(0.0);
+        let retry_after_ms = (missing / self.refill_per_ms).ceil() as u64;
+        Ok((false, Some(retry_after_ms.max(1))))
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl Middleware for RateLimitMiddleware {
+    fn name(&self) -> &str {
+        "rate_limit"
+    }
+
+    fn priority(&self) -> MiddlewarePriority {
+        MiddlewarePriority::First
+    }
+
+    async fn before_agent(
+        &self,
+        ctx: &mut MiddlewareContext,
+        _params: &BeforeAgentParams,
+    ) -> error::Result<Option<BeforeAgentResult>> {
+        let key = ctx
+            .metadata
+            .get("rate_limit_key")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(&ctx.session_id);
+        let now = Self::now_millis();
+        let (allowed, retry_after_ms) = self.acquire(key, now)?;
+        if allowed {
+            return Ok(None);
+        }
+        Err(error::GaussError::RateLimited {
+            provider: "middleware:rate_limit".to_string(),
+            retry_after_ms,
+        })
+    }
+}
+
 #[derive(Debug)]
 struct CacheEntry {
     value: String,

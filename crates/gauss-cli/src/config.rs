@@ -2,10 +2,16 @@ use gauss_core::agent::Agent;
 use gauss_core::message::Message;
 use gauss_core::provider::anthropic::AnthropicProvider;
 use gauss_core::provider::deepseek::DeepSeekProvider;
+use gauss_core::provider::fireworks::FireworksProvider;
 use gauss_core::provider::google::GoogleProvider;
 use gauss_core::provider::groq::GroqProvider;
+use gauss_core::provider::mistral::MistralProvider;
 use gauss_core::provider::ollama::OllamaProvider;
 use gauss_core::provider::openai::OpenAiProvider;
+use gauss_core::provider::openrouter::OpenRouterProvider;
+use gauss_core::provider::perplexity::PerplexityProvider;
+use gauss_core::provider::together::TogetherProvider;
+use gauss_core::provider::xai::XaiProvider;
 use gauss_core::provider::{Provider, ProviderConfig};
 use serde::Deserialize;
 use std::io::{self, BufRead, Write};
@@ -114,6 +120,12 @@ fn build_provider(provider_type: &str, model: &str) -> Result<Arc<dyn Provider>,
         "groq" => "GROQ_API_KEY",
         "ollama" => "OLLAMA_API_KEY",
         "deepseek" => "DEEPSEEK_API_KEY",
+        "openrouter" => "OPENROUTER_API_KEY",
+        "together" => "TOGETHER_API_KEY",
+        "fireworks" => "FIREWORKS_API_KEY",
+        "mistral" => "MISTRAL_API_KEY",
+        "perplexity" => "PERPLEXITY_API_KEY",
+        "xai" => "XAI_API_KEY",
         other => return Err(format!("Unknown provider: {other}")),
     };
 
@@ -132,6 +144,12 @@ fn build_provider(provider_type: &str, model: &str) -> Result<Arc<dyn Provider>,
         "groq" => Arc::new(GroqProvider::create(model, config)),
         "ollama" => Arc::new(OllamaProvider::create(model, config)),
         "deepseek" => Arc::new(DeepSeekProvider::create(model, config)),
+        "openrouter" => Arc::new(OpenRouterProvider::create(model, config)),
+        "together" => Arc::new(TogetherProvider::create(model, config)),
+        "fireworks" => Arc::new(FireworksProvider::create(model, config)),
+        "mistral" => Arc::new(MistralProvider::create(model, config)),
+        "perplexity" => Arc::new(PerplexityProvider::create(model, config)),
+        "xai" => Arc::new(XaiProvider::create(model, config)),
         _ => unreachable!(),
     };
 

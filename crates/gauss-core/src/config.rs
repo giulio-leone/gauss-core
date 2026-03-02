@@ -33,7 +33,7 @@ fn default_max_steps() -> usize {
 /// Provider definition in config.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfigDef {
-    /// Provider type: openai, anthropic, google, groq, ollama, deepseek
+    /// Provider type: openai, anthropic, google, groq, ollama, deepseek, openrouter, together, fireworks, mistral, perplexity, xai
     #[serde(rename = "type")]
     pub provider_type: String,
     pub model: String,

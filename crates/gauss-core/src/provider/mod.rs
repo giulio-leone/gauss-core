@@ -251,8 +251,15 @@ pub fn build_client(timeout_ms: Option<u64>) -> reqwest::Client {
 
 pub mod anthropic;
 pub mod deepseek;
+pub mod fireworks;
 pub mod google;
 pub mod groq;
+pub mod mistral;
 pub mod ollama;
 pub mod openai;
+pub mod openai_compatible;
+pub mod openrouter;
+pub mod perplexity;
 pub mod retry;
+pub mod together;
+pub mod xai;

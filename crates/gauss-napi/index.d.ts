@@ -128,6 +128,14 @@ export function generate_with_tools(
 // ============ Provider Capabilities ============
 
 export function get_provider_capabilities(providerHandle: number): any
+export function estimate_cost(
+  model: string,
+  inputTokens: number,
+  outputTokens: number,
+  reasoningTokens?: number | undefined | null,
+  cacheReadTokens?: number | undefined | null,
+  cacheCreationTokens?: number | undefined | null
+): any
 
 // ============ Code Execution (PTC) ============
 
@@ -212,6 +220,11 @@ export function destroy_network(handle: number): void
 export function create_middleware_chain(): number
 export function middleware_use_logging(handle: number): void
 export function middleware_use_caching(handle: number, ttlMs: number): void
+export function middleware_use_rate_limit(
+  handle: number,
+  requestsPerMinute: number,
+  burst?: number | undefined | null
+): void
 export function destroy_middleware_chain(handle: number): void
 
 // ============ HITL — Approval ============

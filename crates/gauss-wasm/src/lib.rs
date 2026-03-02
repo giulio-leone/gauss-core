@@ -13,11 +13,17 @@ use gauss_core::memory;
 use gauss_core::message::Message as RustMessage;
 use gauss_core::provider::anthropic::AnthropicProvider;
 use gauss_core::provider::deepseek::DeepSeekProvider;
+use gauss_core::provider::fireworks::FireworksProvider;
 use gauss_core::provider::google::GoogleProvider;
 use gauss_core::provider::groq::GroqProvider;
+use gauss_core::provider::mistral::MistralProvider;
 use gauss_core::provider::ollama::OllamaProvider;
 use gauss_core::provider::openai::OpenAiProvider;
+use gauss_core::provider::openrouter::OpenRouterProvider;
+use gauss_core::provider::perplexity::PerplexityProvider;
 use gauss_core::provider::retry::{RetryConfig, RetryProvider};
+use gauss_core::provider::together::TogetherProvider;
+use gauss_core::provider::xai::XaiProvider;
 use gauss_core::provider::{GenerateOptions, Provider, ProviderConfig};
 use gauss_core::rag;
 use gauss_core::streaming::StreamEvent;
@@ -60,6 +66,12 @@ pub fn create_provider(
         "groq" => Shared::new(GroqProvider::create(model, config)),
         "ollama" => Shared::new(OllamaProvider::create(model, config)),
         "deepseek" => Shared::new(DeepSeekProvider::create(model, config)),
+        "openrouter" => Shared::new(OpenRouterProvider::create(model, config)),
+        "together" => Shared::new(TogetherProvider::create(model, config)),
+        "fireworks" => Shared::new(FireworksProvider::create(model, config)),
+        "mistral" => Shared::new(MistralProvider::create(model, config)),
+        "perplexity" => Shared::new(PerplexityProvider::create(model, config)),
+        "xai" => Shared::new(XaiProvider::create(model, config)),
         other => return Err(JsValue::from_str(&format!("Unknown provider: {other}"))),
     };
 

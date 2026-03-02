@@ -1,7 +1,7 @@
-use crate::provider::{get_provider, PROVIDERS};
-use crate::registry::{next_handle, py_err, HandleRegistry};
-use gauss_core::provider::retry::RetryConfig;
+use crate::provider::{PROVIDERS, get_provider};
+use crate::registry::{HandleRegistry, next_handle, py_err};
 use gauss_core::provider::Provider;
+use gauss_core::provider::retry::RetryConfig;
 use gauss_core::{guardrail, middleware, resilience, stream_transform};
 use pyo3::prelude::*;
 use std::sync::{Arc, Mutex};
@@ -33,6 +33,24 @@ pub fn middleware_use_caching(handle: u32, ttl_ms: u32) -> PyResult<()> {
         .lock()
         .unwrap()
         .use_middleware(Arc::new(middleware::CachingMiddleware::new(ttl_ms as u64)));
+    Ok(())
+}
+
+#[pyfunction]
+#[pyo3(signature = (handle, requests_per_minute, burst=None))]
+pub fn middleware_use_rate_limit(
+    handle: u32,
+    requests_per_minute: u32,
+    burst: Option<u32>,
+) -> PyResult<()> {
+    let chain = MIDDLEWARE_CHAINS.get_clone(handle)?;
+    chain
+        .lock()
+        .unwrap()
+        .use_middleware(Arc::new(middleware::RateLimitMiddleware::new(
+            requests_per_minute,
+            burst,
+        )));
     Ok(())
 }
 

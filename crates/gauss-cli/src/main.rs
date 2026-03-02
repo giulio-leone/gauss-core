@@ -2,11 +2,17 @@ use clap::Parser;
 use gauss_core::message::Message;
 use gauss_core::provider::anthropic::AnthropicProvider;
 use gauss_core::provider::deepseek::DeepSeekProvider;
+use gauss_core::provider::fireworks::FireworksProvider;
 use gauss_core::provider::google::GoogleProvider;
 use gauss_core::provider::groq::GroqProvider;
+use gauss_core::provider::mistral::MistralProvider;
 use gauss_core::provider::ollama::OllamaProvider;
 use gauss_core::provider::openai::OpenAiProvider;
+use gauss_core::provider::openrouter::OpenRouterProvider;
+use gauss_core::provider::perplexity::PerplexityProvider;
 use gauss_core::provider::retry::{RetryConfig, RetryProvider};
+use gauss_core::provider::together::TogetherProvider;
+use gauss_core::provider::xai::XaiProvider;
 use gauss_core::provider::{GenerateOptions, Provider, ProviderConfig};
 use std::io::{self, BufRead, Write};
 use std::sync::Arc;
@@ -69,6 +75,12 @@ fn build_provider(provider_type: &str, model: &str) -> Result<Arc<dyn Provider>,
         "groq" => "GROQ_API_KEY",
         "ollama" => "OLLAMA_API_KEY",
         "deepseek" => "DEEPSEEK_API_KEY",
+        "openrouter" => "OPENROUTER_API_KEY",
+        "together" => "TOGETHER_API_KEY",
+        "fireworks" => "FIREWORKS_API_KEY",
+        "mistral" => "MISTRAL_API_KEY",
+        "perplexity" => "PERPLEXITY_API_KEY",
+        "xai" => "XAI_API_KEY",
         other => return Err(format!("Unknown provider: {other}")),
     };
 
@@ -87,6 +99,12 @@ fn build_provider(provider_type: &str, model: &str) -> Result<Arc<dyn Provider>,
         "groq" => Arc::new(GroqProvider::create(model, config)),
         "ollama" => Arc::new(OllamaProvider::create(model, config)),
         "deepseek" => Arc::new(DeepSeekProvider::create(model, config)),
+        "openrouter" => Arc::new(OpenRouterProvider::create(model, config)),
+        "together" => Arc::new(TogetherProvider::create(model, config)),
+        "fireworks" => Arc::new(FireworksProvider::create(model, config)),
+        "mistral" => Arc::new(MistralProvider::create(model, config)),
+        "perplexity" => Arc::new(PerplexityProvider::create(model, config)),
+        "xai" => Arc::new(XaiProvider::create(model, config)),
         _ => unreachable!(),
     };
 
@@ -115,6 +133,12 @@ async fn main() {
             println!("  groq       — Groq (Llama 3.3 70B, Mixtral, etc.) [GROQ_API_KEY]");
             println!("  ollama     — Ollama (local, no API key needed)");
             println!("  deepseek   — DeepSeek (Chat, Coder, Reasoner) [DEEPSEEK_API_KEY]");
+            println!("  openrouter — OpenRouter (multi-provider routing) [OPENROUTER_API_KEY]");
+            println!("  together   — Together AI [TOGETHER_API_KEY]");
+            println!("  fireworks  — Fireworks AI [FIREWORKS_API_KEY]");
+            println!("  mistral    — Mistral AI [MISTRAL_API_KEY]");
+            println!("  perplexity — Perplexity API [PERPLEXITY_API_KEY]");
+            println!("  xai        — xAI Grok [XAI_API_KEY]");
         }
         Commands::Chat {
             provider,
