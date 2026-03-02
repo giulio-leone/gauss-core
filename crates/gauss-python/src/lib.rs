@@ -31,8 +31,11 @@ fn gauss_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(provider::destroy_provider, m)?)?;
     m.add_function(wrap_pyfunction!(provider::get_provider_capabilities, m)?)?;
     m.add_function(wrap_pyfunction!(code_exec::generate, m)?)?;
+    m.add_function(wrap_pyfunction!(code_exec::generate_with_tools, m)?)?;
     m.add_function(wrap_pyfunction!(code_exec::stream_generate, m)?)?;
     m.add_function(wrap_pyfunction!(agent::agent_run, m)?)?;
+    m.add_function(wrap_pyfunction!(agent::agent_run_with_tool_executor, m)?)?;
+    m.add_function(wrap_pyfunction!(agent::agent_stream, m)?)?;
     // Memory
     m.add_function(wrap_pyfunction!(memory::create_memory, m)?)?;
     m.add_function(wrap_pyfunction!(memory::memory_store, m)?)?;

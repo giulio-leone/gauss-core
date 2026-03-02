@@ -1,6 +1,7 @@
 use crate::provider::get_provider;
 use crate::types::{parse_messages, parse_reasoning_effort};
 use gauss_core::provider::GenerateOptions;
+use gauss_core::tool::Tool as RustTool;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use serde_json::json;
@@ -212,6 +213,83 @@ pub fn generate_image(
             .map_err(|e| PyRuntimeError::new_err(format!("Image generation error: {e}")))?;
 
         serde_json::to_string(&result)
+            .map_err(|e| PyRuntimeError::new_err(format!("Serialize error: {e}")))
+    })
+}
+
+/// Call a provider with tool definitions. Returns JSON string.
+#[pyfunction]
+#[pyo3(signature = (provider_handle, messages_json, tools_json, temperature=None, max_tokens=None, thinking_budget=None, reasoning_effort=None))]
+pub fn generate_with_tools(
+    py: Python<'_>,
+    provider_handle: u32,
+    messages_json: String,
+    tools_json: String,
+    temperature: Option<f64>,
+    max_tokens: Option<u32>,
+    thinking_budget: Option<u32>,
+    reasoning_effort: Option<String>,
+) -> PyResult<Bound<'_, pyo3::types::PyAny>> {
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let provider = get_provider(provider_handle)?;
+        let rust_msgs = parse_messages(&messages_json)?;
+
+        let tool_defs: Vec<serde_json::Value> = serde_json::from_str(&tools_json)
+            .map_err(|e| PyRuntimeError::new_err(format!("Invalid tools JSON: {e}")))?;
+
+        let rust_tools: Vec<RustTool> = tool_defs
+            .iter()
+            .map(|td| {
+                let name = td["name"].as_str().unwrap_or("unknown");
+                let description = td["description"].as_str().unwrap_or("");
+                let mut tb = RustTool::builder(name, description);
+                if let Some(params) = td.get("parameters").filter(|p| !p.is_null()) {
+                    tb = tb.parameters_json(params.clone());
+                }
+                tb.build()
+            })
+            .collect();
+
+        let parsed_effort = reasoning_effort.as_deref().and_then(parse_reasoning_effort);
+
+        let opts = GenerateOptions {
+            temperature,
+            max_tokens,
+            thinking_budget,
+            reasoning_effort: parsed_effort,
+            ..GenerateOptions::default()
+        };
+
+        let result = provider
+            .generate(&rust_msgs, &rust_tools, &opts)
+            .await
+            .map_err(|e| PyRuntimeError::new_err(format!("Generate error: {e}")))?;
+
+        let text = result.text().unwrap_or("").to_string();
+        let tool_calls: Vec<serde_json::Value> = result
+            .message
+            .tool_calls()
+            .into_iter()
+            .map(|(id, name, args)| {
+                json!({
+                    "id": id,
+                    "name": name,
+                    "args": args,
+                })
+            })
+            .collect();
+
+        let output = json!({
+            "text": text,
+            "tool_calls": tool_calls,
+            "usage": {
+                "input_tokens": result.usage.input_tokens,
+                "output_tokens": result.usage.output_tokens,
+            },
+            "finish_reason": format!("{:?}", result.finish_reason),
+        });
+
+        serde_json::to_string(&output)
             .map_err(|e| PyRuntimeError::new_err(format!("Serialize error: {e}")))
     })
 }
